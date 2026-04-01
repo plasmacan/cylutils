@@ -1,0 +1,7 @@
+__pycache__/
+*.STORE
+*.db
+.venv/
+.vscode/
+dist/
+*.egg-info/
