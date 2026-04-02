@@ -47,6 +47,18 @@ version = {attr = "cylutils.__version__"}
 "cylutils-resources/quickstart/apps/APPNAME" = [
     "src/templates/quickstart/apps/APPNAME/storeexample.ex.get.py",
 ]
+"cylutils-resources/quickstart/apps/APPNAME/api" = [
+    "src/templates/quickstart/apps/APPNAME/api/v1.lh.default.py"
+]
+"cylutils-resources/quickstart/apps/APPNAME/api/v1" = [
+    "src/templates/quickstart/apps/APPNAME/api/v1/foo.ex.get.py",
+    "src/templates/quickstart/apps/APPNAME/api/v1/foo.ex.post.py",
+]
+"cylutils-resources/examples/jinja2" = [
+    "src/templates/examples/jinja2/jinja2-example.ex.get.py",
+    "src/templates/examples/jinja2/jinja2-example.html",
+]
+
 
 [tool.ruff]
 target-version = "py313"
