@@ -36,28 +36,8 @@ package-dir = {"" = "src"}
 [tool.setuptools.dynamic]
 version = {attr = "cylutils.__version__"}
 
-[tool.setuptools.data-files]
-"cylutils-resources/quickstart" = ["src/templates/quickstart/server.py"]
-"cylutils-resources/quickstart/apps" = [
-    "src/templates/quickstart/apps/appname.500.py",
-    "src/templates/quickstart/apps/APPNAME.eh.get.py",
-    "src/templates/quickstart/apps/APPNAME.ex.get.py",
-    "src/templates/quickstart/apps/APPNAME.lh.get.py",
-]
-"cylutils-resources/quickstart/apps/APPNAME" = [
-    "src/templates/quickstart/apps/APPNAME/storeexample.ex.get.py",
-]
-"cylutils-resources/quickstart/apps/APPNAME/api" = [
-    "src/templates/quickstart/apps/APPNAME/api/v1.lh.default.py"
-]
-"cylutils-resources/quickstart/apps/APPNAME/api/v1" = [
-    "src/templates/quickstart/apps/APPNAME/api/v1/foo.ex.get.py",
-    "src/templates/quickstart/apps/APPNAME/api/v1/foo.ex.post.py",
-]
-"cylutils-resources/examples/jinja2" = [
-    "src/templates/examples/jinja2/jinja2-example.ex.get.py",
-    "src/templates/examples/jinja2/jinja2-example.html",
-]
+[tool.setuptools.package-data]
+cylutils = ["templates/**/*"]
 
 
 [tool.ruff]

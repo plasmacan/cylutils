@@ -2,12 +2,11 @@ import os
 import pathlib
 import shutil
 import sys
-import sysconfig
 
 import click
 import questionary
 
-MODULE_ROOT = pathlib.Path(sysconfig.get_path("data")) / "cylutils-resources"
+MODULE_ROOT = pathlib.Path(__file__).resolve().parent / "resources"
 QUICKSTART_DIR = MODULE_ROOT / "quickstart"
 EXAMPLES_DIR = MODULE_ROOT / "examples"
 
@@ -113,7 +112,8 @@ jinja_env.globals["url_for"] = url_for
     # replace placeholders in all files and rename app dir and files
 
     filepaths = [f for f in target_dir.glob("**/*") if f.is_file()]
-    dirpaths = [d for d in target_dir.glob("**/*") if d.is_dir()].reveerse()
+    dirpaths = [d for d in target_dir.glob("**/*") if d.is_dir()]
+    dirpaths.reverse()
     for fp in filepaths:
         with fp.open("r", encoding="utf-8") as f:
             content = f.readlines()
