@@ -30,6 +30,9 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
         project_name = questionary.text("Project name:", default="my-project").ask()
     if project_name is None:
         sys.exit(0)
+    if os.path.exists(project_name):
+        print(f"Error: Directory '{project_name}' already exists.", file=sys.stderr)
+        sys.exit(1)
 
     if app_name is None:
         app_name = questionary.text("App name:", default="my-app").ask()
