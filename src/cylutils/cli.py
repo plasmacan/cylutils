@@ -19,10 +19,11 @@ def cli():
 @cli.command()
 @click.argument("project-name", required=False)
 @click.argument("app-name", required=False)
-@click.option("--store-type", type=click.Choice(["simple_store", "g_object", "none"]), required=False)
+@click.option("--store-type", type=click.Choice(["simple_store", "none"]), required=False)
 @click.option("--template-engine", type=click.Choice(["jinja2", "none"]))
 @click.option("--add-sessions", is_flag=True, required=False, default=None)
-def start_project(project_name, app_name, store_type, template_engine, add_sessions):
+@click.option("--add-g", is_flag=True, required=False, default=None)
+def start_project(project_name, app_name, store_type, template_engine, add_sessions, add_g):
     click.echo("⚡CYLINDER QUICKSTART⚡")
 
     if project_name is None:
@@ -36,15 +37,18 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
         sys.exit(0)
 
     if store_type is None:
-        store_type = questionary.select(
-            "Select a store type:", choices=["simple_store", "g_object", "none"]
-        ).ask()
+        store_type = questionary.select("Select a store type:", choices=["simple_store", "none"]).ask()
     if store_type is None:
         sys.exit(0)
 
     if template_engine is None:
         template_engine = questionary.select("Select a template engine:", choices=["jinja2", "none"]).ask()
     if template_engine is None:
+        sys.exit(0)
+
+    if add_g is None:
+        add_g = questionary.confirm("Would you like to include a global context variable (g)?").ask()
+    if add_g is None:
         sys.exit(0)
 
     if add_sessions is None:
@@ -64,10 +68,6 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
             import_list.append("from cylutils import simple_store")
             init_list.append("s = simple_store.Store()")
             params_list.append('"store": s')
-
-        case "g_object":
-            import_list.append("from types import SimpleNamespace")
-            params_list.append('"g": SimpleNamespace()')
 
     match template_engine:
         case "jinja2":
@@ -100,6 +100,10 @@ jinja_env.globals["url_for"] = url_for
 """)
             params_list.append('"render_template": render_template')
             generated_links_list.append('<a href="/jinja2-example">View Jinja2 Example</a>')
+
+    if add_g:
+        import_list.append("from types import SimpleNamespace")
+        params_list.append('"g": SimpleNamespace()')
 
     if add_sessions:
         import_list.append("import secrets")
