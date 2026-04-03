@@ -57,6 +57,7 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
     params_list = []
     app_map_def_list = []
     app_map_params_list = []
+    generated_links_list = []
 
     match store_type:
         case "simple_store":
@@ -98,6 +99,7 @@ def url_for(endpoint, **query_params):
 jinja_env.globals["url_for"] = url_for
 """)
             params_list.append('"render_template": render_template')
+            generated_links_list.append('<a href="/jinja2-example">View Jinja2 Example</a>')
 
     if add_sessions:
         import_list.append("import secrets")
@@ -146,6 +148,7 @@ class SessionDict(UserDict):
     param_def = "{\n" + ",\n".join(params_list) + "\n}"
     app_map_def = "\n\n".join(app_map_def_list)
     app_map_params = ", ".join(app_map_params_list)
+    generated_links = "\n    ".join(generated_links_list)
 
     replacements = {
         "# APPNAME #": app_name,
@@ -154,6 +157,7 @@ class SessionDict(UserDict):
         "# APPMAPDEF #": app_map_def,
         "# APPMAPPARAMS #": app_map_params,
         "# PARAMSDEF #": "params = " + param_def,
+        "<!--GENERATED LINKS-->": generated_links,
     }
 
     target_dir = pathlib.Path.cwd() / project_name
@@ -200,7 +204,6 @@ class SessionDict(UserDict):
         py_path = sample_path / "jinja2-example.ex.get.py"
         template_path = sample_path / "jinja2-example.html"
 
-        os.mkdir(target_dir / "templates")
         shutil.copy(py_path, target_dir / "apps" / app_name / "jinja2-example.ex.get.py")
         shutil.copy(template_path, target_dir / "templates" / "jinja2-example.html")
 
