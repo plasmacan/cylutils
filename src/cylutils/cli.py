@@ -21,7 +21,8 @@ def cli():
 @click.argument("app-name", required=False)
 @click.option("--store-type", type=click.Choice(["simple_store", "g_object", "none"]), required=False)
 @click.option("--template-engine", type=click.Choice(["jinja2", "none"]))
-def start_project(project_name, app_name, store_type, template_engine):
+@click.option("--add-sessions", is_flag=True, required=False, default=None)
+def start_project(project_name, app_name, store_type, template_engine, add_sessions):
     click.echo("⚡CYLINDER QUICKSTART⚡")
 
     if project_name is None:
@@ -35,7 +36,9 @@ def start_project(project_name, app_name, store_type, template_engine):
         sys.exit(0)
 
     if store_type is None:
-        store_type = questionary.select("Select a store type:", choices=["simple_store", "none"]).ask()
+        store_type = questionary.select(
+            "Select a store type:", choices=["simple_store", "g_object", "none"]
+        ).ask()
     if store_type is None:
         sys.exit(0)
 
@@ -44,9 +47,16 @@ def start_project(project_name, app_name, store_type, template_engine):
     if template_engine is None:
         sys.exit(0)
 
+    if add_sessions is None:
+        add_sessions = questionary.confirm("Would you like to include sessions?").ask()
+    if add_sessions is None:
+        sys.exit(0)
+
     import_list = []
     init_list = []
     params_list = []
+    app_map_def_list = []
+    app_map_params_list = []
 
     match store_type:
         case "simple_store":
@@ -61,6 +71,7 @@ def start_project(project_name, app_name, store_type, template_engine):
     match template_engine:
         case "jinja2":
             import_list.append("import jinja2")
+            import_list.append("import urllib")
             init_list.append("""
 jinja_env = jinja2.Environment(
     loader=jinja2.FileSystemLoader("templates"),
@@ -88,15 +99,61 @@ jinja_env.globals["url_for"] = url_for
 """)
             params_list.append('"render_template": render_template')
 
-    imports = "\n".join(import_list)
-    inits = "\n".join(init_list)
-    params = "{\n" + ",\n".join(params_list) + "\n}"
+    if add_sessions:
+        import_list.append("import secrets")
+        import_list.append("import json")
+        import_list.append("import sqlite3")
+        import_list.append("from collections import UserDict")
+        init_list.append("""
+class SessionDict(UserDict):
+    def __init__(self, uid):
+        self.uid = uid
+        self.conn = sqlite3.connect("sessions.sqlite")
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS store (uid TEXT PRIMARY KEY, data TEXT)"
+        )
+        row = self.conn.execute(
+            "SELECT data FROM store WHERE uid=?", (self.uid,)
+        ).fetchone()
+        super().__init__(json.loads(row[0]) if row else {})
+
+    def _save(self):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO store VALUES (?, ?)",
+            (self.uid, json.dumps(self.data)),
+        )
+        self.conn.commit()
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self._save()
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self._save()""")
+        app_map_params_list.append("request")
+        app_map_params_list.append("response")
+        app_map_def_list.append("""
+    session_id = request.cookies.get("session_id") or secrets.token_urlsafe(32)
+    response.set_cookie("session_id", session_id, httponly=True) # should also set `secure=True` in production
+    session = SessionDict(session_id)
+""")
+        params_list.append('"session": session')
+        params_list.append('"session_id": session_id')
+
+    import_def = "\n".join(import_list)
+    init_def = "\n".join(init_list)
+    param_def = "{\n" + ",\n".join(params_list) + "\n}"
+    app_map_def = "\n\n".join(app_map_def_list)
+    app_map_params = ", ".join(app_map_params_list)
 
     replacements = {
         "# APPNAME #": app_name,
-        "# IMPORTDEF #": imports,
-        "# INITDEF #": inits,
-        "# PARAMSDEF #": "params = " + params,
+        "# IMPORTDEF #": import_def,
+        "# INITDEF #": init_def,
+        "# APPMAPDEF #": app_map_def,
+        "# APPMAPPARAMS #": app_map_params,
+        "# PARAMSDEF #": "params = " + param_def,
     }
 
     target_dir = pathlib.Path.cwd() / project_name

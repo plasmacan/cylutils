@@ -13,11 +13,11 @@ def main(host: str | None, port: int | None) -> None:
     waitress.serve(app, host=(host or "127.0.0.1"), port=(port or 8080))
 
 
-def app_map():
+def app_map(# APPMAPPARAMS #):
+
+    # APPMAPDEF #
 
     params = {}
-
-    # GDEF #
     # PARAMSDEF #
 
     return "apps", "# APPNAME #", params

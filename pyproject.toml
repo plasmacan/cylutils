@@ -37,7 +37,7 @@ package-dir = {"" = "src"}
 version = {attr = "cylutils.__version__"}
 
 [tool.setuptools.package-data]
-cylutils = ["templates/**/*"]
+cylutils = ["resources/**"]
 
 
 [tool.ruff]
