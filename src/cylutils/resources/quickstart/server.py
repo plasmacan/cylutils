@@ -25,7 +25,6 @@ def app_map(# APPMAPPARAMS #):
 
     # APPMAPDEF #
 
-    params = {}
     # PARAMSDEF #
 
     return "apps", "# APPNAME #", params

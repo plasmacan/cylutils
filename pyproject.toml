@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["cylinder", "waitress", "click", "questionary"]
 
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
 [[project.authors]]
 name = "Nicholas Gray"
 email = "nicholas@tier2.tech"
@@ -78,34 +81,22 @@ max-complexity = 15
 
 [tool.ruff.lint.pylint]
 max-args = 5
-max-positional-args = 5
-max-locals = 30
-max-returns = 6
-max-branches = 20
-max-statements = 70
-max-public-methods = 20
-max-bool-expr = 5
-max-nested-blocks = 5
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=cylutils --cov-branch --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["cylutils"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cylutils"]
-
-[tool.coverage.run]
-source = ["."]
-omit = [
-    "tests/*",
-    "*/__pycache__/*",
-    "*.html",
-    "*.txt",
-    "*.md",
-    "*.STORE"
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:"
-]
