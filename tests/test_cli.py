@@ -155,4 +155,3 @@ class TestStartProjectCommand:
             mock_text.return_value.ask.return_value = None
             result = runner.invoke(cli, ["start-project"])
         assert result.exit_code == 0
-
