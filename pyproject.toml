@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["cylinder", "waitress", "click", "questionary"]
 
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "pre-commit"]
+
 [[project.authors]]
 name = "Nicholas Gray"
 email = "nicholas@tier2.tech"
@@ -36,25 +39,16 @@ package-dir = {"" = "src"}
 [tool.setuptools.dynamic]
 version = {attr = "cylutils.__version__"}
 
-[tool.setuptools.data-files]
-"cylutils-resources/quickstart" = ["src/templates/quickstart/server.py"]
-"cylutils-resources/quickstart/apps" = [
-    "src/templates/quickstart/apps/appname.500.py",
-    "src/templates/quickstart/apps/APPNAME.eh.get.py",
-    "src/templates/quickstart/apps/APPNAME.ex.get.py",
-    "src/templates/quickstart/apps/APPNAME.lh.get.py",
-]
-"cylutils-resources/quickstart/apps/APPNAME" = [
-    "src/templates/quickstart/apps/APPNAME/storeexample.ex.get.py",
-]
+[tool.setuptools.package-data]
+cylutils = ["resources/**"]
+
 
 [tool.ruff]
 target-version = "py313"
 line-length = 107 # 107 is the Github diff-view line-wrap limit on a 1080 monitor at 1x zoom
 exclude = [
     "tests/*",
-    "test_sites/*",
-	".ci-tools/*"
+    ".ci-tools/*",
 ]
 
 [tool.ruff.lint]
@@ -86,34 +80,29 @@ max-complexity = 15
 
 [tool.ruff.lint.pylint]
 max-args = 5
-max-positional-args = 5
-max-locals = 30
-max-returns = 6
-max-branches = 20
-max-statements = 70
-max-public-methods = 20
-max-bool-expr = 5
-max-nested-blocks = 5
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=cylutils --cov-branch --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["cylutils"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+skip_covered = true
+ignore_errors = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = ".repo-reports/coverage"
+skip_covered = false
 
 [tool.ruff.lint.isort]
 known-first-party = ["cylutils"]
-
-[tool.coverage.run]
-source = ["."]
-omit = [
-    "tests/*",
-    "*/__pycache__/*",
-    "*.html",
-    "*.txt",
-    "*.md",
-    "*.STORE"
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:"
-]

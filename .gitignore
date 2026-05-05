@@ -1,7 +1,11 @@
 __pycache__/
-*.STORE
-*.db
+.pytest_cache/
 .venv/
 .vscode/
-dist/
+*.db
 *.egg-info/
+*.STORE
+dist/
+build/
+.coverage
+.ruff_cache/

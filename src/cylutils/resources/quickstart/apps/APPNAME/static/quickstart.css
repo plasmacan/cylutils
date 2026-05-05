@@ -1,0 +1,197 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-bg: #f8f9fa;
+  --color-text: #333;
+  --color-muted: #6c757d;
+  --color-accent: #8b158f;
+  --color-accent-hover: #4b0758;
+  --color-card-bg: #fff;
+  --color-border: #e0e0e0;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Fira Code", "Consolas", "Courier New", monospace;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  line-height: 1.6;
+}
+
+/* ── Hero section ────────────────────────────────── */
+.hero {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.hero-logo {
+  font-size: 3.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.hero h1 {
+  font-size: 1.6rem;
+  font-weight: 400;
+  color: var(--color-accent);
+  margin-bottom: 0.25rem;
+}
+
+.hero p {
+  font-size: 0.95rem;
+  color: var(--color-muted);
+}
+
+.hero .brand {
+  display: block;
+  margin-top: 1.25rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-text);
+}
+
+/* ── Card grid (footer links) ────────────────────── */
+.cards {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  border-top: 1px solid var(--color-border);
+  padding-top: 2rem;
+  max-width: 760px;
+  width: 100%;
+}
+
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  padding: 0.75rem 1rem;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background 0.15s;
+  min-width: 200px;
+  flex: 1;
+}
+
+.card:hover {
+  background: var(--color-card-bg);
+}
+
+.card-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.card-body strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.card-body span {
+  font-size: 0.82rem;
+  color: var(--color-muted);
+}
+
+/* ── Inline content section ──────────────────────── */
+.content {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 2rem 2.5rem;
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.content h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.content p {
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.content a {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.content a:hover {
+  text-decoration: underline;
+}
+
+/* ── Form styling ────────────────────────────────── */
+.form-group {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.form-group input[type="text"] {
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.form-group input[type="text"]:focus {
+  border-color: var(--color-accent);
+}
+
+.form-group button,
+.btn {
+  padding: 0.55rem 1.1rem;
+  background: var(--color-accent);
+  color: #fff !important;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.form-group button:hover,
+.btn:hover {
+  background: var(--color-accent-hover);
+}
+
+/* ── Code block ──────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+}

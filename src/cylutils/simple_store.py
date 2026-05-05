@@ -251,6 +251,7 @@ class Store:
     def _get_conn(self, store_name: str):
         conn = sqlite3.connect(store_name)
         cursor = conn.cursor()
+        cursor.execute("pragma journal_mode=wal;")
         cursor.execute("CREATE TABLE IF NOT EXISTS store (key TEXT PRIMARY KEY, value TEXT, exp REAL)")
         conn.commit()
         return conn

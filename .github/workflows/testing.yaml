@@ -1,0 +1,121 @@
+name: code testing workflow
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-tests-${{github.ref}}-testing
+  cancel-in-progress: true
+
+jobs:
+  code_testing_job:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    name: code testing job
+    steps:
+      - name: print context info
+        run: |
+          echo "github.event_name:" ${{github.event_name}}
+          echo "github.event.action:" ${{github.event.action}}
+          echo "github.actor:" ${{github.actor}}
+
+      - name: checkout with GITHUB_TOKEN
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip modules...
+        id: cache-pip
+        uses: actions/cache@v3
+        with:
+          key: "pip-cache-\
+            ${{ runner.os }}-\
+            ${{ steps.setup-python.outputs.python-version }}-\
+            ${{ env.pythonLocation }}-\
+            ${{ hashFiles('requirements.txt') }}-\
+            ${{ hashFiles('requirements.in') }}"
+          path: |
+            ~/.cache/pip
+        #   ${{ env.pythonLocation }}
+
+      - name: Cache pre-commit...
+        id: cache-pre-commit
+        uses: actions/cache@v3
+        with:
+          key: "pre-commit-cache-\
+            ${{ runner.os }}-\
+            ${{ steps.setup-python.outputs.python-version }}-\
+            ${{ env.pythonLocation }}-\
+            ${{ hashFiles('.pre-commit-config.yaml') }}"
+          path: |
+            ~/.cache/pre-commit
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install --force-reinstall setuptools virtualenv packaging
+          pip install pip-tools
+          pip-compile requirements.in -q --generate-hashes --strip-extras --allow-unsafe
+          pip install -r requirements.txt
+          python -m build
+          pip install dist/*.whl
+
+      - name: pre-commit initial cleanup
+        # this will fix any problems it can which the developer left behind
+        # needs to run before pytest because it may break something
+        run: |
+          pre-commit run --all-files --hook-stage manual
+        continue-on-error: true
+
+      - name: test with pytest
+        run: |
+          pytest
+
+      - name: update shields
+        # relies on pytest having run so that the coverage database exists.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          python .ci-tools/coverage_shield.py
+          python .ci-tools/quality_shield.py
+
+      - name: pre-commit final cleanup
+        # this will fix any formatting problems from output of pytest and .ci-tools/*
+        # needs to run after pytest and .ci-tools/* to clean up their output
+        run: |
+          pre-commit run --all-files --hook-stage manual
+        continue-on-error: true
+
+      - name: revert workflows
+        # changes to workflows cannot be committed by CI normally.
+        # revert those changes if they exist.
+        run: |
+          git checkout HEAD .github/workflows
+          git clean -df .github/workflows
+
+      - name: test with pre-commit
+        # This is the actual pre-commit test run.
+        # It will fail if any linters are unhappy
+        # it will also fail if .github/workflows is untidy
+        run: |
+          pre-commit run --all-files --hook-stage manual
+
+      - name: commit changes
+        # this will commit any changes that CI made to the branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r --cached .
+          git add .
+          git commit -am "🤖 Automated CI update"
+          git push
+        continue-on-error: true

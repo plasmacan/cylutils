@@ -1,12 +1,24 @@
-import pathlib
-import shutil
+import os
 import sys
-import sysconfig
+from typing import Any, Callable
 
 import click
 import questionary
 
-QUICKSTART_DIR = pathlib.Path(sysconfig.get_path("data")) / "cylutils-resources" / "quickstart"
+from .features import ADDONS, STORE_TYPES, TEMPLATE_ENGINES
+from .project import scaffold
+
+
+def _ask(value: Any, question_fn: Callable[[], Any]) -> Any:
+    """Return value if already provided, otherwise prompt with question_fn.
+    Exits if the user cancels (questionary returns None).
+    """
+    if value is not None:
+        return value
+    result = question_fn()
+    if result is None:
+        sys.exit(0)
+    return result
 
 
 @click.group()
@@ -17,81 +29,51 @@ def cli():
 @cli.command()
 @click.argument("project-name", required=False)
 @click.argument("app-name", required=False)
-@click.option("--store-type", type=click.Choice(["simple_store", "g_object"]), required=False)
-def start_project(project_name, app_name, store_type):
+@click.option("--store-type", type=click.Choice(list(STORE_TYPES)), required=False)
+@click.option("--template-engine", type=click.Choice(list(TEMPLATE_ENGINES)))
+@click.option("--add-sessions", is_flag=True, required=False, default=None)
+@click.option("--add-g", is_flag=True, required=False, default=None)
+def start_project(project_name, app_name, store_type, template_engine, add_sessions, add_g):
     click.echo("⚡CYLINDER QUICKSTART⚡")
 
-    if project_name is None:
-        project_name = questionary.text("Project name:", default="my-project").ask()
-    if project_name is None:
-        sys.exit(0)
-
-    if app_name is None:
-        app_name = questionary.text("App name:", default="my-app").ask()
-    if app_name is None:
-        sys.exit(0)
-
-    if store_type is None:
-        store_type = questionary.select("Select a store type:", choices=["simple_store", "none"]).ask()
-    if store_type is None:
-        sys.exit(0)
-
-    import_list = []
-    init_list = []
-    params_list = []
-
-    match store_type:
-        case "simple_store":
-            import_list.append("from cylutils import simple_store")
-            init_list.append("s = simple_store.Store()")
-            params_list.append('"store": s')
-
-        case "g_object":
-            import_list.append("from types import SimpleNamespace")
-            params_list.append('"g": SimpleNamespace()')
-
-    imports = "\n".join(import_list)
-    inits = "\n".join(init_list)
-    params = "{\n" + ",\n".join(params_list) + "\n}"
-
-    replacements = {
-        "# APPNAME #": app_name,
-        "# IMPORTDEF #": imports,
-        "# INITDEF #": inits,
-        "# PARAMSDEF #": "params = " + params,
-    }
-
-    target_dir = pathlib.Path.cwd() / project_name
-
-    shutil.copytree(
-        src=QUICKSTART_DIR,
-        dst=target_dir,
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    project_name = _ask(
+        project_name, lambda: questionary.text("Project name:", default="my-project").ask()
     )
-    filepaths = [f for f in target_dir.glob("**/*") if f.is_file()]
-    dirpaths = [d for d in target_dir.glob("**/*") if d.is_dir()]
-    for fp in filepaths:
-        with fp.open("r", encoding="utf-8") as f:
-            print("opening " + fp.name)
-            content = f.readlines()
+    if os.path.exists(project_name):
+        print(f"Error: Directory '{project_name}' already exists.", file=sys.stderr)
+        sys.exit(1)
 
-        with fp.open("w", encoding="utf-8") as f:
-            for line in content:
-                newline = line
-                for placeholder, value in replacements.items():
-                    newline = newline.replace(placeholder, value)
-                f.write(newline)
+    app_name = _ask(app_name, lambda: questionary.text("App name:", default="my-app").ask())
+    store_type = _ask(
+        store_type, lambda: questionary.select("Select a store type:", choices=list(STORE_TYPES)).ask()
+    )
+    template_engine = _ask(
+        template_engine,
+        lambda: questionary.select("Select a template engine:", choices=list(TEMPLATE_ENGINES)).ask(),
+    )
+    add_g = _ask(
+        add_g,
+        lambda: questionary.confirm("Would you like to include a global context variable (g)?").ask(),
+    )
+    add_sessions = _ask(
+        add_sessions, lambda: questionary.confirm("Would you like to include sessions?").ask()
+    )
 
-        if "APPNAME" in str(fp):
-            new_fp = fp.parent / fp.name.replace("APPNAME", app_name)
-            fp.rename(new_fp)
+    selected_features = []
 
-    for dp in dirpaths:
-        if "APPNAME" in str(dp):
-            new_fp = dp.parent / dp.name.replace("APPNAME", app_name)
-            dp.rename(new_fp)
+    if feature := STORE_TYPES.get(store_type):
+        selected_features.append(feature)
 
+    if feature := TEMPLATE_ENGINES.get(template_engine):
+        selected_features.append(feature)
+
+    if add_g:
+        selected_features.append(ADDONS["g"])
+
+    if add_sessions:
+        selected_features.append(ADDONS["sessions"])
+
+    scaffold(project_name, app_name, selected_features)
     click.echo("✅ Done!")
 
 

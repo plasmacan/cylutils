@@ -1,3 +1,10 @@
 cylinder
 waitress
+click
 questionary
+pre-commit
+pytest
+pytest-cov
+ruff
+build
+twine

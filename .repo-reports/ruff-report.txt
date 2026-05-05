@@ -1,0 +1,3 @@
+output from ruff check:
+src/cylutils/resources/quickstart/server.py:24:31: invalid-syntax: Expected `)`, found newline
+Found 1 error.
