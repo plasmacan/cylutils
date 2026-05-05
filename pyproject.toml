@@ -23,7 +23,7 @@ classifiers = [
 dependencies = ["cylinder", "waitress", "click", "questionary"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "pre-commit"]
 
 [[project.authors]]
 name = "Nicholas Gray"
@@ -48,8 +48,7 @@ target-version = "py313"
 line-length = 107 # 107 is the Github diff-view line-wrap limit on a 1080 monitor at 1x zoom
 exclude = [
     "tests/*",
-    "test_sites/*",
-	".ci-tools/*"
+    ".ci-tools/*",
 ]
 
 [tool.ruff.lint]
@@ -93,10 +92,17 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
+fail_under = 100
+skip_covered = true
+ignore_errors = true
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
 ]
+
+[tool.coverage.html]
+directory = ".repo-reports/coverage"
+skip_covered = false
 
 [tool.ruff.lint.isort]
 known-first-party = ["cylutils"]

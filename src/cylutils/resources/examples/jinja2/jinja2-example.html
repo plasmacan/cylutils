@@ -1,28 +1,28 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="static/quickstart.css" />
-    <title>Jinja2 Example</title>
-  </head>
-  <body>
-    <div class="hero">
-      <div class="hero-logo">&#x1f331;</div>
-      <h1>Hello, {{ args.name | default("world") }}!</h1>
-      <p>This page is rendered with Jinja2 templates.</p>
-      <span class="brand">cylinder</span>
-    </div>
-
-    <div class="content">
-      <h2>Try it out</h2>
-      <p>Enter a name below to re-render this page:</p>
-      <form action="jinja2-example" method="get">
-        <div class="form-group">
-          <input type="text" name="name" id="name" placeholder="Your name" />
-          <button type="submit">Submit</button>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="stylesheet" href="static/quickstart.css" />
+        <title>Jinja2 Example</title>
+    </head>
+    <body>
+        <div class="hero">
+            <div class="hero-logo">&#x1f331;</div>
+            <h1>Hello, {{ args.name | default("world") }}!</h1>
+            <p>This page is rendered with Jinja2 templates.</p>
+            <span class="brand">cylinder</span>
         </div>
-      </form>
-    </div>
-  </body>
+
+        <div class="content">
+            <h2>Try it out</h2>
+            <p>Enter a name below to re-render this page:</p>
+            <form action="jinja2-example" method="get">
+                <div class="form-group">
+                    <input type="text" name="name" id="name" placeholder="Your name" />
+                    <button type="submit">Submit</button>
+                </div>
+            </form>
+        </div>
+    </body>
 </html>

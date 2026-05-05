@@ -1,0 +1,44 @@
+name: automerge workflow
+on:
+  pull_request_target:
+
+jobs:
+  automerge_job:
+    name: automerge job
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    env:
+      # append additional users to the USER_ALLOWLIST to allow automerge for them
+      USER_ALLOWLIST: |
+        '[
+          "${{github.repository_owner}}",
+          "dependabot[bot]",
+          "grintor",
+          "falaventho"
+        ]'
+    steps:
+      - name: Print Context Info
+        run: |
+          echo "event name:" ${{github.event_name}}
+          echo "event action:" ${{github.event.action}}
+          echo "actor:" ${{github.actor}}
+          echo "repository owner:" ${{github.repository_owner}}
+          echo "pull request user:" ${{github.event.pull_request.user.login}}
+          echo "pull request number:" ${{github.event.pull_request.number}}
+          echo "allow list:" ${{ env.USER_ALLOWLIST }}
+          echo "actor approved": ${{contains(fromJSON(env.USER_ALLOWLIST), github.actor)}}
+          echo "pull request user approved": ${{contains(fromJSON(env.USER_ALLOWLIST), github.event.pull_request.user.login)}}
+
+      - name: automerge with GITHUB_TOKEN
+        if: >-
+          ${{
+              contains(fromJSON(env.USER_ALLOWLIST), github.actor) &&
+              contains(fromJSON(env.USER_ALLOWLIST), github.event.pull_request.user.login)
+          }}
+        uses: peter-evans/enable-pull-request-automerge@v2
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          pull-request-number: ${{github.event.pull_request.number}}
+          merge-method: squash

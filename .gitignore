@@ -6,4 +6,6 @@ __pycache__/
 *.egg-info/
 *.STORE
 dist/
+build/
 .coverage
+.ruff_cache/
