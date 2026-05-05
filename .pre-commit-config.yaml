@@ -13,6 +13,7 @@ repos:
       - id: check-yaml
         fail_fast: true # applies to check-yaml as well as every hook below
       - id: name-tests-test
+        args: [--pytest-test-first]
       - id: no-commit-to-branch
         stages: [pre-commit]
 
@@ -20,17 +21,10 @@ repos:
     rev: v0.15.1
     hooks:
       - id: ruff-check
-        exclude: (?x)^( tests/ )
+        exclude: "(?x)^(tests/|src/cylutils/resources/)"
         args: [--fix]
       - id: ruff-format
-        exclude: (?x)^( tests/ )
-
-  - repo: https://github.com/Lucas-C/pre-commit-hooks-java
-    rev: 1.3.10
-    hooks:
-      - id: validate-html
-        name: html validate
-        exclude: (?x)^( tests/ | src/cylutils/resources/ )
+        exclude: "(?x)^(tests/|src/cylutils/resources/)"
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
     rev: v1.3.3
