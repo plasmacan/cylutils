@@ -1,1 +1,11 @@
-coverage report pending first CI run
+Name                                                                                            Stmts   Miss Branch BrPart  Cover   Missing
+-------------------------------------------------------------------------------------------------------------------------------------------
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/__init__.py           8      0      0      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/__main__.py           2      0      0      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/cli.py               46      0     14      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/feature.py           12      0      0      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/features.py          11      0      0      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/project.py           59      0     18      0   100%
+/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/site-packages/cylutils/simple_store.py     147      0     38      0   100%
+-------------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                                                                                             285      0     70      0   100%
