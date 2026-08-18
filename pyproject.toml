@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=82"]
+requires = ["setuptools>=82", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 
@@ -9,10 +9,9 @@ dynamic = ["version"]
 description = "A collection of utilities for plasmacan/cylinder applications."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -25,6 +24,9 @@ dependencies = ["cylinder", "waitress", "click", "questionary"]
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pre-commit"]
 
+[project.scripts]
+cylutils = "cylutils.cli:cli"
+
 [[project.authors]]
 name = "Nicholas Gray"
 email = "nicholas@tier2.tech"
@@ -36,8 +38,7 @@ Homepage = "https://github.com/plasmacan/cylutils"
 packages = ["cylutils"]
 package-dir = {"" = "src"}
 
-[tool.setuptools.dynamic]
-version = {attr = "cylutils.__version__"}
+[tool.setuptools_scm]
 
 [tool.setuptools.package-data]
 cylutils = ["resources/**"]
@@ -77,9 +78,6 @@ task-tags = ["FIXME", "XXX", "TODO"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
-
-[tool.ruff.lint.pylint]
-max-args = 5
 
 
 [tool.pytest.ini_options]
