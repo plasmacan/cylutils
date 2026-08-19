@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 from .models import CYLINDER_PARAMS, RouteInfo
 
+_INFER_DESCRIPTION_LINE_COUNT = 2  # lines after summary to include in description
 _EX_RE = re.compile(r"^(.+)\.ex\.([a-zA-Z]+)\.py$")
 
 _JSON_TYPE_MAP: dict[type, str] = {
@@ -89,8 +90,8 @@ def _load_and_inspect(route: RouteInfo) -> RouteInfo:
         if docstring:
             lines = docstring.splitlines()
             inferred["summary"] = lines[0]
-            if len(lines) > 2:
-                inferred["description"] = "\n".join(lines[2:]).strip()
+            if len(lines) > _INFER_DESCRIPTION_LINE_COUNT:
+                inferred["description"] = "\n".join(lines[1 : _INFER_DESCRIPTION_LINE_COUNT + 1]).strip()
 
     sidecar = _load_sidecar(route.handler_file)
     # sidecar keys override inferred keys
