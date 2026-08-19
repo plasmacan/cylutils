@@ -8,3 +8,5 @@ pytest-cov
 ruff
 build
 twine
+urllib3>=2.7.0
+idna>=3.15

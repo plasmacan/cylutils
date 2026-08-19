@@ -23,7 +23,7 @@ jobs:
           echo "github.actor:" ${{github.actor}}
 
       - name: checkout with GITHUB_TOKEN
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,7 +35,7 @@ jobs:
 
       - name: Cache pip modules...
         id: cache-pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: "pip-cache-\
             ${{ runner.os }}-\
@@ -49,7 +49,7 @@ jobs:
 
       - name: Cache pre-commit...
         id: cache-pre-commit
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: "pre-commit-cache-\
             ${{ runner.os }}-\
