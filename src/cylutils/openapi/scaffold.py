@@ -246,7 +246,7 @@ def _schema_to_dataclass(name: str, schema: dict) -> tuple[str, bool]:
     return f"@dataclass\nclass {name}:\n{body}", needs_optional
 
 
-def _build_docstring(operation: dict, all_params: list[dict]) -> str:
+def _build_docstring(operation: dict, all_params: list[dict]) -> str:  # noqa: PLR0912
     """Build a structured docstring from OpenAPI operation metadata."""
     lines: list[str] = []
 
