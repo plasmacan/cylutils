@@ -49,7 +49,7 @@ def scaffold_from_openapi(
     output_dir: str | Path,
     overwrite: bool = False,
 ) -> list[Path]:
-    """Generate Cylinder handler files from an OpenAPI 3.0 spec.
+    """Generate Cylinder handler files from an OpenAPI 3.0/3.1 spec.
 
     Returns the list of files created.  Existing files are skipped unless
     ``overwrite=True``.
@@ -60,7 +60,8 @@ def scaffold_from_openapi(
     output_dir = Path(output_dir)
     spec: dict = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
     paths: dict = spec.get("paths", {})
-    components_schemas: dict = (spec.get("components") or {}).get("schemas") or {}
+    components: dict = spec.get("components") or {}
+    components_params: dict = components.get("parameters") or {}
 
     created: list[Path] = []
 
@@ -69,7 +70,10 @@ def scaffold_from_openapi(
             continue
 
         # Parameters defined at the path level are shared by all methods.
-        path_level_params: list[dict] = path_item.get("parameters", [])
+        # Resolve any $ref parameters before using them.
+        path_level_params: list[dict] = [
+            _resolve_param_ref(p, components_params) for p in path_item.get("parameters", [])
+        ]
 
         for method, operation in path_item.items():
             if method.startswith("x-") or method == "parameters":
@@ -93,25 +97,44 @@ def scaffold_from_openapi(
             handler_path = dir_path / f"{segment}.ex.{method}.py"
 
             # Operation params override path-level params with the same name.
-            op_params: list[dict] = operation.get("parameters", [])
+            op_params: list[dict] = [
+                _resolve_param_ref(p, components_params) for p in operation.get("parameters", [])
+            ]
             op_param_names = {p.get("name") for p in op_params}
             all_params = op_params + [p for p in path_level_params if p.get("name") not in op_param_names]
 
-            # Collect component schemas referenced by this operation.
-            schemas = _collect_refs(operation, components_schemas)
+            # Collect component schemas referenced by this operation (follows $ref
+            # transitively through schemas, responses, and parameters).
+            schemas = _collect_refs(operation, components)
 
             if overwrite or not handler_path.exists():
-                handler_path.write_text(_render_handler(operation, all_params, schemas), encoding="utf-8")
+                handler_path.write_text(
+                    _render_handler(operation, all_params, schemas, components),
+                    encoding="utf-8",
+                )
                 created.append(handler_path)
 
     return created
 
 
+def _resolve_param_ref(param: dict, components_params: dict) -> dict:
+    """Return the resolved parameter object, following a $ref if present."""
+    if "$ref" in param:
+        ref_name = param["$ref"].split("/")[-1]
+        return components_params.get(ref_name, param)
+    return param
+
+
 def _render_handler(
-    operation: dict, all_params: list[dict] | None = None, schemas: dict | None = None
+    operation: dict,
+    all_params: list[dict] | None = None,
+    schemas: dict | None = None,
+    components: dict | None = None,
 ) -> str:
     if all_params is None:
         all_params = operation.get("parameters", [])
+
+    components_schemas: dict = (components or {}).get("schemas") or {}
 
     # Only query parameters become Python function arguments; path/header/cookie
     # params are accessed via request.path / request.headers / request.cookies.
@@ -120,15 +143,16 @@ def _render_handler(
     extra_lines: list[str] = []
     for p in sig_params:
         name = p.get("name", "param")
-        schema = p.get("schema", {})
-        py_type = _JSON_TO_PY.get(schema.get("type", ""), "str")
+        schema = p.get("schema") or {}
+        type_str, _ = _normalize_type(schema.get("type"))
+        py_type = _JSON_TO_PY.get(type_str, "str")
         if "default" in schema:
             extra_lines.append(f"    {name}: {py_type} = {schema['default']!r},")
         else:
             extra_lines.append(f"    {name}: {py_type},")
 
     extra_params = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
-    docstring = _build_docstring(operation, all_params)
+    docstring = _build_docstring(operation, all_params, components)
 
     if docstring:
         # Escape braces so .format() doesn't mis-interpret docstring content.
@@ -144,7 +168,7 @@ def _render_handler(
     dataclass_blocks: list[str] = []
     needs_optional = False
     for schema_name, schema in schemas.items():
-        code, opt = _schema_to_dataclass(schema_name, schema)
+        code, opt = _schema_to_dataclass(schema_name, schema, components_schemas)
         if code:
             if opt:
                 needs_optional = True
@@ -165,19 +189,35 @@ def _render_handler(
 
 
 def _collect_refs(obj: object, components: dict, _visited: set | None = None) -> dict[str, dict]:
-    """Recursively find all #/components/schemas/$ref targets reachable from obj."""
+    """Recursively find all component schema objects reachable via $ref from obj.
+
+    Follows $ref into schemas, responses, and parameters components so that
+    schemas nested inside component responses are discovered.
+    """
     if _visited is None:
         _visited = set()
+    schemas = components.get("schemas") or {}
+    responses = components.get("responses") or {}
+    parameters = components.get("parameters") or {}
     found: dict[str, dict] = {}
     if isinstance(obj, dict):
         if "$ref" in obj:
             ref = obj["$ref"]
-            if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
-                name = ref.split("/")[-1]
-                if name not in _visited and name in components:
-                    _visited.add(name)
-                    found[name] = components[name]
-                    found.update(_collect_refs(components[name], components, _visited))
+            if isinstance(ref, str):
+                if ref.startswith("#/components/schemas/"):
+                    name = ref.split("/")[-1]
+                    if name not in _visited and name in schemas:
+                        _visited.add(name)
+                        found[name] = schemas[name]
+                        found.update(_collect_refs(schemas[name], components, _visited))
+                elif ref.startswith("#/components/responses/"):
+                    resp_name = ref.split("/")[-1]
+                    if resp_name in responses:
+                        found.update(_collect_refs(responses[resp_name], components, _visited))
+                elif ref.startswith("#/components/parameters/"):
+                    param_name = ref.split("/")[-1]
+                    if param_name in parameters:
+                        found.update(_collect_refs(parameters[param_name], components, _visited))
         else:
             for v in obj.values():
                 found.update(_collect_refs(v, components, _visited))
@@ -187,37 +227,96 @@ def _collect_refs(obj: object, components: dict, _visited: set | None = None) ->
     return found
 
 
+def _normalize_type(raw_type) -> tuple[str, bool]:
+    """Return (type_str, nullable_from_list) from an OpenAPI type value.
+
+    OpenAPI 3.1 allows ``type`` to be a list such as ``[string, null]``.
+    Only lists that include the string ``"null"`` (or Python ``None``) are
+    treated as nullable.
+    """
+    if isinstance(raw_type, list):
+        non_null = [t for t in raw_type if t not in ("null", None)]
+        has_null = any(t in ("null", None) for t in raw_type)
+        return ((non_null[0] or "").lower() if non_null else ""), has_null
+    return (raw_type or "").lower(), False
+
+
 def _prop_to_py_type(prop: dict, nullable: bool = False) -> tuple[str, bool]:
     """Return (python_type_str, needs_Optional).
 
-    nullable=True or prop["nullable"]=true wraps the type in Optional[...].
+    nullable=True, prop["nullable"]=true, or an OpenAPI 3.1 null-union type
+    all wrap the result in Optional[...].
     """
-    is_nullable = nullable or bool(prop.get("nullable"))
-    type_ = (prop.get("type") or "").lower()
+    # Handle $ref as a direct property value.
+    if "$ref" in prop:
+        ref_name = prop["$ref"].split("/")[-1]
+        is_nullable = nullable or bool(prop.get("nullable"))
+        if is_nullable:
+            return f"Optional[{ref_name}]", True
+        return ref_name, False
 
-    if type_ == "array":
+    type_str, list_nullable = _normalize_type(prop.get("type"))
+    is_nullable = nullable or bool(prop.get("nullable")) or list_nullable
+
+    if type_str == "array":
         items = prop.get("items") or {}
         if "$ref" in items:
             item_type = items["$ref"].split("/")[-1]
             base = f"list[{item_type}]"
         elif items.get("type"):
-            item_type = _JSON_TO_PY.get(items["type"].lower(), "object")
+            item_type_str, _ = _normalize_type(items["type"])
+            item_type = _JSON_TO_PY.get(item_type_str, "object")
             base = f"list[{item_type}]"
         else:
             base = "list"
     else:
-        base = _JSON_TO_PY.get(type_, "object")
+        base = _JSON_TO_PY.get(type_str, "object")
 
     if is_nullable:
         return f"Optional[{base}]", True
     return base, False
 
 
-def _schema_to_dataclass(name: str, schema: dict) -> tuple[str, bool]:
+def _merge_allof(schema: dict, components_schemas: dict) -> dict:
+    """Flatten allOf into a single properties/required dict.
+
+    Non-allOf schemas are returned unchanged.
+    """
+    if "allOf" not in schema:
+        return schema
+
+    merged_props: dict = {}
+    merged_required: list = []
+
+    for sub in schema["allOf"]:
+        if "$ref" in sub:
+            ref_name = sub["$ref"].split("/")[-1]
+            sub = components_schemas.get(ref_name, {})
+            # Recursively flatten if the referenced schema also uses allOf.
+            sub = _merge_allof(sub, components_schemas)
+        merged_props.update(sub.get("properties") or {})
+        merged_required.extend(sub.get("required") or [])
+
+    # Direct properties on the allOf object itself override sub-schema properties.
+    merged_props.update(schema.get("properties") or {})
+    merged_required.extend(schema.get("required") or [])
+
+    return {
+        "type": "object",
+        "properties": merged_props,
+        "required": list(dict.fromkeys(merged_required)),
+    }
+
+
+def _schema_to_dataclass(
+    name: str, schema: dict, components_schemas: dict | None = None
+) -> tuple[str, bool]:
     """Return (dataclass_code, needs_Optional) for an OpenAPI object schema.
 
     Non-object schemas or schemas without properties return ("", False).
+    allOf schemas are flattened before processing.
     """
+    schema = _merge_allof(schema, components_schemas or {})
     properties: dict = schema.get("properties") or {}
     if not properties:
         return "", False
@@ -246,8 +345,9 @@ def _schema_to_dataclass(name: str, schema: dict) -> tuple[str, bool]:
     return f"@dataclass\nclass {name}:\n{body}", needs_optional
 
 
-def _build_docstring(operation: dict, all_params: list[dict]) -> str:  # noqa: PLR0912
+def _build_docstring(operation: dict, all_params: list[dict], components: dict | None = None) -> str:  # noqa: PLR0912
     """Build a structured docstring from OpenAPI operation metadata."""
+    components_responses: dict = (components or {}).get("responses") or {}
     lines: list[str] = []
 
     summary = (operation.get("summary") or "").strip()
@@ -268,9 +368,9 @@ def _build_docstring(operation: dict, all_params: list[dict]) -> str:  # noqa: P
             required = p.get("required", False)
             desc = (p.get("description") or "").strip()
             schema = p.get("schema") or {}
-            type_ = schema.get("type", "")
+            type_str, _ = _normalize_type(schema.get("type"))
 
-            meta = [x for x in [type_, in_, "required" if required else ""] if x]
+            meta = [x for x in [type_str, in_, "required" if required else ""] if x]
             annotation = f"({', '.join(meta)})" if meta else ""
 
             line = f"    {name}"
@@ -299,7 +399,14 @@ def _build_docstring(operation: dict, all_params: list[dict]) -> str:  # noqa: P
         lines.append("")
         lines.append("Responses:")
         for code, resp in responses.items():
-            resp_desc = (resp.get("description") or "") if isinstance(resp, dict) else ""
+            if isinstance(resp, dict):
+                if "$ref" in resp:
+                    # Resolve component response for its description.
+                    resp_name = resp["$ref"].split("/")[-1]
+                    resp = components_responses.get(resp_name) or {}
+                resp_desc = resp.get("description") or ""
+            else:
+                resp_desc = ""
             lines.append(f"    {code}: {resp_desc}")
 
     if not lines:

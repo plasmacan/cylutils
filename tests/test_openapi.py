@@ -29,6 +29,8 @@ from cylutils.openapi.inspect import (
 )
 from cylutils.openapi.scaffold import (
     _collect_refs,
+    _merge_allof,
+    _normalize_type,
     _prop_to_py_type,
     _schema_to_dataclass,
 )
@@ -437,6 +439,26 @@ class TestScaffoldFromOpenapi:
         assert "Responses:" in content
         assert "200: Successful response" in content
         assert "404: Not found" in content
+
+    def test_docstring_null_response_value_handled(self, tmp_path):
+        # A response value that is null (None in Python) should not crash.
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                delete:
+                  summary: Delete item
+                  responses:
+                    "204": ~
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "items.ex.delete.py").read_text(encoding="utf-8")
+        assert "204:" in content
 
     def test_docstring_includes_request_body_ref(self, tmp_path):
         spec = self._spec(
@@ -1141,7 +1163,7 @@ class TestScaffoldEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-_COMP = {
+_SCHEMAS = {
     "Todo": {"type": "object", "properties": {"id": {"type": "string"}}},
     "CreateTodo": {"type": "object", "properties": {"title": {"type": "string"}}},
     "Tag": {"type": "object", "properties": {"name": {"type": "string"}}},
@@ -1149,6 +1171,8 @@ _COMP = {
     "A": {"properties": {"b": {"$ref": "#/components/schemas/B"}}},
     "B": {"properties": {"a": {"$ref": "#/components/schemas/A"}}},
 }
+# _collect_refs now takes the full components dict, not just the schemas section
+_COMP = {"schemas": _SCHEMAS}
 
 
 class TestCollectRefs:
@@ -1184,9 +1208,127 @@ class TestCollectRefs:
     def test_list_traversed(self):
         assert "Todo" in _collect_refs([{"$ref": "#/components/schemas/Todo"}], _COMP)
 
+    def test_follows_ref_through_component_response(self):
+        # $ref pointing to a component response should surface the schema inside it.
+        components = {
+            "schemas": {"Error": {"type": "object", "properties": {"code": {"type": "string"}}}},
+            "responses": {
+                "Unauthorized": {
+                    "description": "Unauthorized",
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}},
+                }
+            },
+        }
+        op = {"responses": {"401": {"$ref": "#/components/responses/Unauthorized"}}}
+        result = _collect_refs(op, components)
+        assert "Error" in result
+
+    def test_follows_ref_through_component_parameter(self):
+        components = {
+            "schemas": {},
+            "parameters": {
+                "ItemId": {"name": "item_id", "in": "path", "required": True, "schema": {"type": "string"}},
+            },
+        }
+        op = {"parameters": [{"$ref": "#/components/parameters/ItemId"}]}
+        result = _collect_refs(op, components)
+        # No schema refs inside ItemId, but no crash either
+        assert result == {}
+
+    def test_non_string_ref_value_is_skipped(self):
+        # $ref with a non-string value (malformed) should not crash
+        assert _collect_refs({"$ref": None}, _COMP) == {}
+        assert _collect_refs({"$ref": 42}, _COMP) == {}
+
+    def test_unknown_response_ref_is_silently_ignored(self):
+        # $ref to a component response that doesn't exist in components
+        components = {"schemas": {}, "responses": {}}
+        op = {"responses": {"404": {"$ref": "#/components/responses/NonExistent"}}}
+        assert _collect_refs(op, components) == {}
+
+    def test_unknown_parameter_ref_is_silently_ignored(self):
+        components = {"schemas": {}, "parameters": {}}
+        op = {"parameters": [{"$ref": "#/components/parameters/NonExistent"}]}
+        assert _collect_refs(op, components) == {}
+
 
 # ---------------------------------------------------------------------------
-# _prop_to_py_type
+# _normalize_type
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeType:
+    def test_plain_string(self):
+        assert _normalize_type("string") == ("string", False)
+
+    def test_none_returns_empty(self):
+        assert _normalize_type(None) == ("", False)
+
+    def test_list_with_null(self):
+        type_str, nullable = _normalize_type(["string", "null"])
+        assert type_str == "string"
+        assert nullable is True
+
+    def test_list_with_none_value(self):
+        type_str, nullable = _normalize_type(["integer", None])
+        assert type_str == "integer"
+        assert nullable is True
+
+    def test_list_only_null(self):
+        type_str, nullable = _normalize_type(["null"])
+        assert type_str == ""
+        assert nullable is True
+
+    def test_list_single_non_null(self):
+        # A single-type list with no null should not be nullable
+        assert _normalize_type(["boolean"]) == ("boolean", False)
+
+
+# ---------------------------------------------------------------------------
+# _merge_allof
+# ---------------------------------------------------------------------------
+
+
+class TestMergeAllof:
+    def test_passthrough_when_no_allof(self):
+        schema = {"type": "object", "properties": {"id": {"type": "string"}}}
+        assert _merge_allof(schema, {}) is schema
+
+    def test_merges_allof_properties(self):
+        base = {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}}
+        child = {
+            "allOf": [
+                {"$ref": "#/components/schemas/Base"},
+                {"type": "object", "properties": {"extra": {"type": "integer"}}},
+            ]
+        }
+        result = _merge_allof(child, {"Base": base})
+        assert "id" in result["properties"]
+        assert "extra" in result["properties"]
+        assert "id" in result["required"]
+
+    def test_direct_properties_override_allof(self):
+        base = {"properties": {"x": {"type": "string"}}}
+        schema = {
+            "allOf": [{"$ref": "#/components/schemas/Base"}],
+            "properties": {"x": {"type": "integer"}},
+        }
+        result = _merge_allof(schema, {"Base": base})
+        assert result["properties"]["x"] == {"type": "integer"}
+
+    def test_recursive_allof(self):
+        grandparent = {"properties": {"a": {"type": "string"}}}
+        parent = {"allOf": [{"$ref": "#/components/schemas/Grandparent"}], "properties": {"b": {"type": "integer"}}}
+        child = {"allOf": [{"$ref": "#/components/schemas/Parent"}], "properties": {"c": {"type": "boolean"}}}
+        schemas = {"Grandparent": grandparent, "Parent": parent}
+        result = _merge_allof(child, schemas)
+        assert "a" in result["properties"]
+        assert "b" in result["properties"]
+        assert "c" in result["properties"]
+
+
+# ---------------------------------------------------------------------------
+# _prop_to_py_type — new cases
 # ---------------------------------------------------------------------------
 
 
@@ -1234,6 +1376,32 @@ class TestPropToPyType:
     def test_array_items_no_type_or_ref(self):
         py_type, _ = _prop_to_py_type({"type": "array", "items": {}})
         assert py_type == "list"
+
+    def test_direct_ref_property(self):
+        py_type, needs = _prop_to_py_type({"$ref": "#/components/schemas/Pagination"})
+        assert py_type == "Pagination"
+        assert needs is False
+
+    def test_direct_ref_property_nullable_kwarg(self):
+        py_type, needs = _prop_to_py_type({"$ref": "#/components/schemas/Pagination"}, nullable=True)
+        assert py_type == "Optional[Pagination]"
+        assert needs is True
+
+    def test_list_type_nullable(self):
+        # OpenAPI 3.1: type: [string, null]
+        py_type, needs = _prop_to_py_type({"type": ["string", "null"]})
+        assert py_type == "Optional[str]"
+        assert needs is True
+
+    def test_list_type_no_null(self):
+        py_type, needs = _prop_to_py_type({"type": ["boolean"]})
+        assert py_type == "bool"
+        assert needs is False
+
+    def test_array_items_with_list_type(self):
+        # items.type may also be a list in 3.1
+        py_type, _ = _prop_to_py_type({"type": "array", "items": {"type": ["integer", "null"]}})
+        assert py_type == "list[int]"
 
 
 # ---------------------------------------------------------------------------
@@ -1288,6 +1456,233 @@ class TestSchemaToDataclass:
         schema = {"properties": {"name": {"type": "string"}}, "required": []}
         code, _ = _schema_to_dataclass("Foo", schema)
         assert "name: Optional[str] = None" in code
+
+    def test_allof_schema_generates_merged_dataclass(self):
+        base_schema = {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}}
+        child_schema = {
+            "allOf": [
+                {"$ref": "#/components/schemas/Base"},
+                {"type": "object", "properties": {"extra": {"type": "integer"}}},
+            ]
+        }
+        code, _ = _schema_to_dataclass("Child", child_schema, {"Base": base_schema})
+        assert "id: str" in code
+        assert "extra: Optional[int] = None" in code
+
+    def test_list_type_nullable_in_required_field(self):
+        schema = {
+            "type": "object",
+            "required": ["hostname"],
+            "properties": {"hostname": {"type": ["string", "null"]}},
+        }
+        code, needs = _schema_to_dataclass("Host", schema)
+        assert "hostname: Optional[str]" in code
+        assert needs is True
+
+    def test_direct_ref_property_in_dataclass(self):
+        schema = {
+            "type": "object",
+            "required": ["page"],
+            "properties": {"page": {"$ref": "#/components/schemas/Pagination"}},
+        }
+        code, _ = _schema_to_dataclass("Response", schema)
+        assert "page: Pagination" in code
+
+
+# ---------------------------------------------------------------------------
+# Roundtrip: scaffold ↔ export consistency
+# ---------------------------------------------------------------------------
+
+
+class TestRoundtrip:
+    """Ensure the scaffold and export directions are consistent with each other."""
+
+    def _write_handler(self, path: Path, code: str, needs_optional: bool = False) -> None:
+        imports = "from dataclasses import dataclass\n"
+        if needs_optional:
+            imports += "from typing import Optional\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(imports + code + "\ndef main(response): pass\n", encoding="utf-8")
+
+    def test_schema_scaffold_then_export_preserves_required_optional(self, tmp_path):
+        """Required/optional status survives a scaffold → export round-trip."""
+        original = {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": {"type": "string"},
+                "label": {"type": "string"},
+            },
+        }
+        code, needs_opt = _schema_to_dataclass("Widget", original)
+        handler = tmp_path / "widgets.ex.get.py"
+        self._write_handler(handler, code, needs_opt)
+
+        from cylutils.openapi.inspect import _extract_dataclass_schemas, _load_module
+
+        route = RouteInfo(path="/widgets", method="GET", handler_file=handler, module_name="widgets.ex.get")
+        exported = _extract_dataclass_schemas(_load_module(route))["Widget"]
+
+        assert exported["type"] == "object"
+        assert "id" in exported["required"]
+        assert "label" not in exported.get("required", [])
+        assert exported["properties"]["id"] == {"type": "string"}
+
+    def test_schema_scaffold_then_export_preserves_nullable(self, tmp_path):
+        """Nullable (OpenAPI 3.1 list or 3.0 nullable:true) survives round-trip."""
+        original = {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "note": {"type": ["string", "null"]},
+            },
+        }
+        code, needs_opt = _schema_to_dataclass("Item", original)
+        handler = tmp_path / "items.ex.get.py"
+        self._write_handler(handler, code, needs_opt)
+
+        from cylutils.openapi.inspect import _extract_dataclass_schemas, _load_module
+
+        route = RouteInfo(path="/items", method="GET", handler_file=handler, module_name="items.ex.get")
+        exported = _extract_dataclass_schemas(_load_module(route))["Item"]
+
+        assert exported["properties"]["note"].get("nullable") is True
+
+    def test_export_scaffold_export_schemas_match(self, tmp_path):
+        """spec (with $ref) → scaffold → export preserves component schemas."""
+        spec = textwrap.dedent("""\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get:
+                  responses:
+                    "200":
+                      content:
+                        application/json:
+                          schema:
+                            $ref: "#/components/schemas/Item"
+            components:
+              schemas:
+                Item:
+                  type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+        """)
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(spec, encoding="utf-8")
+
+        # Scaffold from spec — handler file gets Item dataclass
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec_path, out)
+
+        # Export the scaffolded app — Item dataclass is read back as a schema
+        doc2 = generate_openapi(out)
+        schemas2 = doc2.get("components", {}).get("schemas", {})
+
+        assert "Item" in schemas2
+        assert schemas2["Item"]["type"] == "object"
+        assert set(schemas2["Item"].get("required", [])) == {"id"}
+        assert set(schemas2["Item"]["properties"].keys()) == {"id", "name"}
+
+    def test_full_spec_scaffolds_without_error(self, tmp_path):
+        """The provided Tier2Tickets spec scaffolds cleanly (regression test)."""
+        spec = textwrap.dedent("""\
+            openapi: "3.1.0"
+            info:
+              title: Tier2Tickets API
+              version: "1.0.0"
+            paths:
+              /endpoints:
+                get:
+                  summary: List endpoints
+                  parameters:
+                    - {name: online, in: query, schema: {type: boolean}}
+                    - {name: limit, in: query, schema: {type: integer}}
+                  responses:
+                    '200':
+                      description: Endpoint page
+                      content:
+                        application/json:
+                          schema:
+                            type: object
+                            properties:
+                              data:
+                                type: array
+                                items: {$ref: '#/components/schemas/EndpointSummary'}
+                    '401': {$ref: '#/components/responses/Unauthorized'}
+              /endpoints/{endpoint_id}:
+                get:
+                  summary: Get endpoint
+                  parameters:
+                    - {$ref: '#/components/parameters/EndpointId'}
+                  responses:
+                    '200':
+                      description: OK
+                      content:
+                        application/json:
+                          schema: {$ref: '#/components/schemas/EndpointDetail'}
+            components:
+              parameters:
+                EndpointId:
+                  name: endpoint_id
+                  in: path
+                  required: true
+                  schema: {type: string}
+              responses:
+                Unauthorized:
+                  description: Missing or invalid API key
+                  content:
+                    application/json:
+                      schema: {$ref: '#/components/schemas/Error'}
+              schemas:
+                EndpointSummary:
+                  type: object
+                  required: [endpoint_id, online]
+                  properties:
+                    endpoint_id: {type: string}
+                    hostname: {type: ['string', 'null']}
+                    online: {type: boolean}
+                EndpointDetail:
+                  allOf:
+                    - {$ref: '#/components/schemas/EndpointSummary'}
+                    - type: object
+                      properties:
+                        last_user: {type: ['string', 'null']}
+                Error:
+                  type: object
+                  required: [error]
+                  properties:
+                    error: {type: object}
+        """)
+        spec_path = tmp_path / "spec.yaml"
+        spec_path.write_text(spec, encoding="utf-8")
+        out = tmp_path / "out"
+
+        created = scaffold_from_openapi(spec_path, out)
+
+        assert len(created) > 0
+        # endpoint handler should exist
+        names = {f.name for f in created}
+        assert "endpoints.ex.get.py" in names
+
+        # EndpointDetail (allOf) should include fields from EndpointSummary
+        detail_files = [f for f in created if "endpoint_id" in f.stem or "endpointId" in f.stem]
+        # Check the get endpoint handler has merged allOf fields
+        get_handler = out / "endpoint_id.ex.get.py"
+        if get_handler.exists():
+            content = get_handler.read_text(encoding="utf-8")
+            assert "endpoint_id: str" in content or "class EndpointDetail" in content
+
+        # Verify $ref response description was resolved
+        list_handler = out / "endpoints.ex.get.py"
+        content = list_handler.read_text(encoding="utf-8")
+        assert "Unauthorized" in content or "401" in content
 
 
 # ---------------------------------------------------------------------------
