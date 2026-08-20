@@ -6,11 +6,11 @@ Name                                                                            
 /opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/feature.py               12      0      0      0   100%
 /opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/features.py              11      0      0      0   100%
 /opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/__init__.py       5      0      0      0   100%
-/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/export.py        26      0      8      0   100%
-/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/inspect.py       98      0     34      0   100%
-/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/models.py        13      0      0      0   100%
-/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/scaffold.py      54      0     22      0   100%
+/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/export.py        30      0     10      0   100%
+/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/inspect.py      145      0     56      0   100%
+/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/models.py        14      0      0      0   100%
+/opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/openapi/scaffold.py     182      0     92      0   100%
 /opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/project.py               59      0     18      0   100%
 /opt/hostedtoolcache/Python/3.13.15/x64/lib/python3.13/site-packages/cylutils/simple_store.py         147      0     38      0   100%
 -----------------------------------------------------------------------------------------------------------------------------------------------
-TOTAL                                                                                                 512      0    140      0   100%
+TOTAL                                                                                                 692      0    234      0   100%
