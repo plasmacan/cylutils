@@ -16,3 +16,4 @@ class RouteInfo:
     module_name: str
     function: Optional[Callable] = None
     metadata: dict = field(default_factory=dict)
+    schemas: dict = field(default_factory=dict)  # {ClassName: openapi_schema_dict}

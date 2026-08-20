@@ -77,16 +77,17 @@ def scan_app(app_path: str | Path) -> list[RouteInfo]:
 
 
 def _load_and_inspect(route: RouteInfo) -> RouteInfo:
-    """Import a handler module and populate ``route.function`` and ``route.metadata``."""
-    fn = _load_handler(route)
-    route.function = fn
+    """Import a handler module and populate ``route.function``, ``route.schemas``, and ``route.metadata``."""
+    module = _load_module(route)
+    route.function = getattr(module, "main", None) if module else None
+    route.schemas = _extract_dataclass_schemas(module) if module else {}
 
     inferred: dict = {}
-    if fn is not None:
-        params = _infer_parameters(fn)
+    if route.function is not None:
+        params = _infer_parameters(route.function)
         if params:
             inferred["parameters"] = params
-        docstring = inspect.getdoc(fn)
+        docstring = inspect.getdoc(route.function)
         if docstring:
             lines = docstring.splitlines()
             inferred["summary"] = lines[0]
@@ -99,8 +100,8 @@ def _load_and_inspect(route: RouteInfo) -> RouteInfo:
     return route
 
 
-def _load_handler(route: RouteInfo) -> Optional[Callable]:
-    """Import a handler file and return its ``main()`` function, or ``None`` on failure."""
+def _load_module(route: RouteInfo):
+    """Import a handler file and return the module object, or ``None`` on failure."""
     spec = importlib.util.spec_from_file_location(route.module_name, route.handler_file)
     if spec is None or spec.loader is None:
         return None
@@ -110,7 +111,83 @@ def _load_handler(route: RouteInfo) -> Optional[Callable]:
     except Exception as exc:
         warnings.warn(f"Could not import {route.handler_file}: {exc}", stacklevel=2)
         return None
-    return getattr(module, "main", None)
+    return module
+
+
+def _load_handler(route: RouteInfo) -> Optional[Callable]:
+    """Import a handler file and return its ``main()`` function, or ``None`` on failure."""
+    module = _load_module(route)
+    return getattr(module, "main", None) if module else None
+
+
+def _extract_dataclass_schemas(module) -> dict[str, dict]:
+    """Return ``{ClassName: openapi_schema}`` for every dataclass defined in module."""
+    import dataclasses as _dc
+
+    schemas: dict[str, dict] = {}
+    for name, obj in inspect.getmembers(module, inspect.isclass):
+        if _dc.is_dataclass(obj) and getattr(obj, "__module__", None) == module.__name__:
+            schemas[name] = _dataclass_to_openapi_schema(obj)
+    return schemas
+
+
+def _hint_to_openapi(hint) -> dict:
+    """Convert a Python type hint to an OpenAPI schema dict."""
+    if hint is None:
+        return {}
+
+    origin = getattr(hint, "__origin__", None)
+    args = getattr(hint, "__args__", ()) or ()
+
+    if origin is typing.Union:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            schema = dict(_hint_to_openapi(non_none[0]))
+            schema["nullable"] = True
+            return schema
+        return {}
+
+    if origin is list:
+        if args:
+            return {"type": "array", "items": _hint_to_openapi(args[0])}
+        return {"type": "array"}
+
+    if origin is dict:
+        return {"type": "object"}
+
+    _HINT_MAP: dict = {
+        str: {"type": "string"},
+        int: {"type": "integer"},
+        float: {"type": "number"},
+        bool: {"type": "boolean"},
+        list: {"type": "array"},
+        dict: {"type": "object"},
+        bytes: {"type": "string", "format": "binary"},
+    }
+    return dict(_HINT_MAP.get(hint, {}))
+
+
+def _dataclass_to_openapi_schema(cls) -> dict:
+    """Convert a dataclass to an OpenAPI 3.0 object schema."""
+    import dataclasses as _dc
+
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:
+        hints = {}
+
+    properties: dict = {}
+    required: list[str] = []
+
+    for f in _dc.fields(cls):
+        properties[f.name] = _hint_to_openapi(hints.get(f.name))
+        if f.default is _dc.MISSING and f.default_factory is _dc.MISSING:
+            required.append(f.name)
+
+    schema: dict = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _infer_parameters(fn: Callable) -> list[dict]:

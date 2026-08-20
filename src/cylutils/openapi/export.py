@@ -20,6 +20,8 @@ def generate_openapi(
         "paths": {},
     }
 
+    all_schemas: dict[str, dict] = {}
+
     for route in routes:
         operation = _build_operation(route)
         path_entry: dict = doc["paths"].setdefault(route.path, {})
@@ -30,6 +32,11 @@ def generate_openapi(
             path_entry.setdefault("x-cylinder-default", []).append(operation)
         else:
             path_entry[method_key] = operation
+
+        all_schemas.update(route.schemas)
+
+    if all_schemas:
+        doc["components"] = {"schemas": all_schemas}
 
     return doc
 
