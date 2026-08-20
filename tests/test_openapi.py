@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from typing import Optional
 from click.testing import CliRunner
 
 from cylutils.cli import cli
@@ -19,6 +20,18 @@ from cylutils.openapi import (
     scaffold_from_openapi,
 )
 from cylutils.openapi.inspect import _infer_parameters, _load_sidecar
+from cylutils.openapi.inspect import (
+    _dataclass_to_openapi_schema,
+    _extract_dataclass_schemas,
+    _hint_to_openapi,
+    _load_handler,
+    _load_module,
+)
+from cylutils.openapi.scaffold import (
+    _collect_refs,
+    _prop_to_py_type,
+    _schema_to_dataclass,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -344,23 +357,112 @@ class TestScaffoldFromOpenapi:
         scaffold_from_openapi(spec, out)
         assert (out / "users.ex.get.py").exists()
 
-    def test_creates_sidecar_file(self, tmp_path):
+    def test_path_level_parameters_dont_crash(self, tmp_path):
         spec = self._spec(
             tmp_path,
             """\
             openapi: "3.0.3"
             info: {title: Test, version: "1.0"}
             paths:
+              /todos/{todoId}:
+                parameters:
+                  - name: todoId
+                    in: path
+                    required: true
+                    schema:
+                      type: string
+                get:
+                  summary: Get todo
+                  responses:
+                    "200": {description: OK}
+                delete:
+                  summary: Delete todo
+                  responses:
+                    "204": {description: Deleted}
+            """,
+        )
+        out = tmp_path / "out"
+        created = scaffold_from_openapi(spec, out)
+        names = {f.name for f in created}
+        # {todoId} stripped to todoId; files land in todos/ subdir
+        assert "todoId.ex.get.py" in names
+        assert "todoId.ex.delete.py" in names
+
+    def test_path_param_in_docstring_not_in_signature(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items/{itemId}:
+                parameters:
+                  - name: itemId
+                    in: path
+                    required: true
+                    schema:
+                      type: string
+                get:
+                  summary: Get item
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        # {itemId} → itemId; file is items/itemId.ex.get.py
+        content = (out / "items" / "itemId.ex.get.py").read_text(encoding="utf-8")
+        # path param documented but not injected as a Python argument
+        assert "itemId (string, path, required)" in content
+        assert "itemId: str" not in content
+
+    def test_docstring_includes_responses(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
               /items:
+                get:
+                  summary: List items
+                  responses:
+                    "200": {description: Successful response}
+                    "404": {description: Not found}
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        assert "Responses:" in content
+        assert "200: Successful response" in content
+        assert "404: Not found" in content
+
+    def test_docstring_includes_request_body_ref(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /todos:
                 post:
-                  summary: Create item
+                  summary: Create todo
+                  requestBody:
+                    required: true
+                    content:
+                      application/json:
+                        schema:
+                          $ref: "#/components/schemas/CreateTodo"
                   responses:
                     "201": {description: Created}
             """,
         )
         out = tmp_path / "out"
         scaffold_from_openapi(spec, out)
-        assert (out / "items.ex.post.openapi.yaml").exists()
+        content = (out / "todos.ex.post.py").read_text(encoding="utf-8")
+        assert "Request Body:" in content
+        assert "application/json, required): CreateTodo" in content
 
     def test_nested_path_creates_subdirs(self, tmp_path):
         spec = self._spec(
@@ -526,27 +628,6 @@ class TestScaffoldFromOpenapi:
         scaffold_from_openapi(spec, out, overwrite=True)
         assert "# original" not in existing.read_text(encoding="utf-8")
 
-    def test_sidecar_excludes_operation_id(self, tmp_path):
-        spec = self._spec(
-            tmp_path,
-            """\
-            openapi: "3.0.3"
-            info: {title: T, version: "1.0"}
-            paths:
-              /items:
-                get:
-                  operationId: items_get
-                  summary: List items
-                  responses:
-                    "200": {description: OK}
-            """,
-        )
-        out = tmp_path / "out"
-        scaffold_from_openapi(spec, out)
-        sidecar = yaml.safe_load((out / "items.ex.get.openapi.yaml").read_text(encoding="utf-8"))
-        assert "operationId" not in sidecar
-        assert sidecar.get("summary") == "List items"
-
     def test_returns_list_of_created_files(self, tmp_path):
         spec = self._spec(
             tmp_path,
@@ -566,8 +647,8 @@ class TestScaffoldFromOpenapi:
         )
         out = tmp_path / "out"
         created = scaffold_from_openapi(spec, out)
-        # 2 routes × (handler + sidecar) = 4 files
-        assert len(created) == 4
+        # 2 routes × 1 handler file each = 2 files (no sidecar YAML)
+        assert len(created) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +924,7 @@ class TestScaffoldEdgeCases:
         assert "Short title" in content
         assert "Detailed description here." in content
 
-    def test_no_summary_no_description_uses_no_doc_template(self, tmp_path):
+    def test_no_summary_no_description_docstring_has_responses(self, tmp_path):
         spec = self._spec(
             tmp_path,
             """\
@@ -861,8 +942,9 @@ class TestScaffoldEdgeCases:
 
         _scaffold(spec, out)
         content = (out / "items.ex.get.py").read_text(encoding="utf-8")
-        # No docstring in the no-doc template
-        assert '"""' not in content
+        # Responses section is always emitted even without summary/description
+        assert "Responses:" in content
+        assert "200: OK" in content
 
     def test_parameter_without_schema(self, tmp_path):
         spec = self._spec(
@@ -885,3 +967,747 @@ class TestScaffoldEdgeCases:
         _scaffold(spec, out)
         content = (out / "items.ex.get.py").read_text(encoding="utf-8")
         assert "q: str" in content
+
+    def test_empty_operation_uses_no_doc_template(self, tmp_path):
+        # Operation with no fields → _build_docstring returns "" → no-doc template used
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get: {}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        _scaffold(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        assert '"""' not in content
+
+    def test_render_handler_without_all_params_falls_back_to_operation(self, tmp_path):
+        from cylutils.openapi.scaffold import _render_handler
+
+        operation = {"parameters": [{"name": "q", "in": "query", "schema": {"type": "string"}}]}
+        content = _render_handler(operation)  # all_params not passed
+        assert "q: str" in content
+
+    def test_parameter_with_description_in_docstring(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get:
+                  parameters:
+                    - name: limit
+                      in: query
+                      description: Maximum results to return.
+                      schema:
+                        type: integer
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        _scaffold(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        assert "limit (integer, query): Maximum results to return." in content
+
+    def test_parameter_with_null_in_has_no_annotation(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get:
+                  parameters:
+                    - name: q
+                      in: null
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        _scaffold(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        # annotation is empty when in is null and no type
+        assert "    q\n" in content or "    q\r\n" in content
+
+    def test_request_body_inline_schema_no_ref(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                post:
+                  requestBody:
+                    required: false
+                    content:
+                      application/json:
+                        schema:
+                          type: object
+                  responses:
+                    "201": {description: Created}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        _scaffold(spec, out)
+        content = (out / "items.ex.post.py").read_text(encoding="utf-8")
+        assert "(application/json, optional)" in content
+
+    def test_params_with_no_responses_skips_responses_section(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get:
+                  parameters:
+                    - name: q
+                      in: query
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        _scaffold(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        assert "Parameters:" in content
+        assert "Responses:" not in content
+
+    def test_non_dict_path_item_is_skipped(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /bad: "not-a-dict"
+              /good:
+                get:
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        created = scaffold_from_openapi(spec, out)
+        assert len(created) == 1
+        assert created[0].name == "good.ex.get.py"
+
+    def test_non_dict_operation_is_skipped(self, tmp_path):
+        # Path items can have string fields like "summary"; they should be ignored.
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                summary: Item operations
+                get:
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        from cylutils.openapi.scaffold import scaffold_from_openapi as _scaffold
+
+        created = scaffold_from_openapi(spec, out)
+        assert len(created) == 1
+        assert created[0].name == "items.ex.get.py"
+
+
+# ---------------------------------------------------------------------------
+# _collect_refs
+# ---------------------------------------------------------------------------
+
+
+_COMP = {
+    "Todo": {"type": "object", "properties": {"id": {"type": "string"}}},
+    "CreateTodo": {"type": "object", "properties": {"title": {"type": "string"}}},
+    "Tag": {"type": "object", "properties": {"name": {"type": "string"}}},
+    "Item": {"type": "object", "properties": {"tags": {"type": "array", "items": {"$ref": "#/components/schemas/Tag"}}}},
+    "A": {"properties": {"b": {"$ref": "#/components/schemas/B"}}},
+    "B": {"properties": {"a": {"$ref": "#/components/schemas/A"}}},
+}
+
+
+class TestCollectRefs:
+    def test_empty_object_returns_empty(self):
+        assert _collect_refs({}, _COMP) == {}
+
+    def test_finds_request_body_ref(self):
+        op = {"requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateTodo"}}}}}
+        assert "CreateTodo" in _collect_refs(op, _COMP)
+
+    def test_finds_response_ref(self):
+        op = {"responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Todo"}}}}}}
+        assert "Todo" in _collect_refs(op, _COMP)
+
+    def test_follows_nested_refs_transitively(self):
+        op = {"requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}
+        result = _collect_refs(op, _COMP)
+        assert "Item" in result
+        assert "Tag" in result
+
+    def test_circular_refs_dont_loop(self):
+        op = {"requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/A"}}}}}
+        result = _collect_refs(op, _COMP)
+        assert "A" in result
+        assert "B" in result
+
+    def test_unknown_ref_skipped(self):
+        assert _collect_refs({"schema": {"$ref": "#/components/schemas/Unknown"}}, _COMP) == {}
+
+    def test_non_component_ref_skipped(self):
+        assert _collect_refs({"schema": {"$ref": "#/definitions/Foo"}}, _COMP) == {}
+
+    def test_list_traversed(self):
+        assert "Todo" in _collect_refs([{"$ref": "#/components/schemas/Todo"}], _COMP)
+
+
+# ---------------------------------------------------------------------------
+# _prop_to_py_type
+# ---------------------------------------------------------------------------
+
+
+class TestPropToPyType:
+    def test_string(self):
+        assert _prop_to_py_type({"type": "string"}) == ("str", False)
+
+    def test_integer(self):
+        assert _prop_to_py_type({"type": "integer"}) == ("int", False)
+
+    def test_number(self):
+        assert _prop_to_py_type({"type": "number"}) == ("float", False)
+
+    def test_boolean(self):
+        assert _prop_to_py_type({"type": "boolean"}) == ("bool", False)
+
+    def test_object(self):
+        assert _prop_to_py_type({"type": "object"}) == ("dict", False)
+
+    def test_unknown_type_falls_back_to_object(self):
+        assert _prop_to_py_type({"type": "binary"}) == ("object", False)
+
+    def test_missing_type_falls_back_to_object(self):
+        assert _prop_to_py_type({}) == ("object", False)
+
+    def test_nullable_kwarg(self):
+        py_type, needs = _prop_to_py_type({"type": "string"}, nullable=True)
+        assert py_type == "Optional[str]" and needs is True
+
+    def test_nullable_prop_flag(self):
+        py_type, needs = _prop_to_py_type({"type": "integer", "nullable": True})
+        assert py_type == "Optional[int]" and needs is True
+
+    def test_array_no_items(self):
+        assert _prop_to_py_type({"type": "array"}) == ("list", False)
+
+    def test_array_with_primitive_items(self):
+        py_type, _ = _prop_to_py_type({"type": "array", "items": {"type": "string"}})
+        assert py_type == "list[str]"
+
+    def test_array_with_ref_items(self):
+        py_type, _ = _prop_to_py_type({"type": "array", "items": {"$ref": "#/components/schemas/Todo"}})
+        assert py_type == "list[Todo]"
+
+    def test_array_items_no_type_or_ref(self):
+        py_type, _ = _prop_to_py_type({"type": "array", "items": {}})
+        assert py_type == "list"
+
+
+# ---------------------------------------------------------------------------
+# _schema_to_dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaToDataclass:
+    def test_object_generates_dataclass(self):
+        schema = {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+                "id": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+            },
+        }
+        code, needs_optional = _schema_to_dataclass("Todo", schema)
+        assert "@dataclass" in code and "class Todo:" in code
+        assert "id: str" in code and "title: str" in code
+        assert "description: Optional[str] = None" in code
+        assert needs_optional is True
+
+    def test_no_properties_returns_empty(self):
+        code, opt = _schema_to_dataclass("Empty", {"type": "object"})
+        assert code == "" and opt is False
+
+    def test_non_object_schema_returns_empty(self):
+        code, opt = _schema_to_dataclass("Tags", {"type": "array"})
+        assert code == "" and opt is False
+
+    def test_optional_field_with_default_value(self):
+        schema = {"properties": {"priority": {"type": "string", "default": "medium"}}}
+        code, _ = _schema_to_dataclass("Task", schema)
+        assert "priority: Optional[str] = 'medium'" in code
+
+    def test_required_nullable_field_is_optional(self):
+        schema = {"required": ["note"], "properties": {"note": {"type": "string", "nullable": True}}}
+        code, needs = _schema_to_dataclass("Item", schema)
+        assert "note: Optional[str]" in code and needs is True
+
+    def test_required_fields_before_optional(self):
+        schema = {
+            "required": ["id"],
+            "properties": {"label": {"type": "string"}, "id": {"type": "integer"}},
+        }
+        code, _ = _schema_to_dataclass("Thing", schema)
+        assert code.index("id: int") < code.index("label:")
+
+    def test_empty_required_list(self):
+        schema = {"properties": {"name": {"type": "string"}}, "required": []}
+        code, _ = _schema_to_dataclass("Foo", schema)
+        assert "name: Optional[str] = None" in code
+
+
+# ---------------------------------------------------------------------------
+# Scaffold with schemas — integration
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldWithSchemas:
+    def _spec(self, tmp_path: Path, content: str) -> Path:
+        p = tmp_path / "spec.yaml"
+        p.write_text(textwrap.dedent(content), encoding="utf-8")
+        return p
+
+    def test_dataclass_from_request_body(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /todos:
+                post:
+                  requestBody:
+                    required: true
+                    content:
+                      application/json:
+                        schema:
+                          $ref: "#/components/schemas/CreateTodo"
+                  responses:
+                    "201": {description: Created}
+            components:
+              schemas:
+                CreateTodo:
+                  type: object
+                  required: [title]
+                  properties:
+                    title:
+                      type: string
+                    priority:
+                      type: string
+                      default: medium
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "todos.ex.post.py").read_text(encoding="utf-8")
+        assert "from dataclasses import dataclass" in content
+        assert "class CreateTodo:" in content
+        assert "title: str" in content
+        assert "priority: Optional[str] = 'medium'" in content
+
+    def test_dataclass_from_response_schema(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /todos:
+                get:
+                  responses:
+                    "200":
+                      content:
+                        application/json:
+                          schema:
+                            $ref: "#/components/schemas/Todo"
+            components:
+              schemas:
+                Todo:
+                  type: object
+                  required: [id, title]
+                  properties:
+                    id:
+                      type: string
+                    title:
+                      type: string
+                    completed:
+                      type: boolean
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "todos.ex.get.py").read_text(encoding="utf-8")
+        assert "class Todo:" in content
+        assert "id: str" in content
+        assert "completed: Optional[bool] = None" in content
+
+    def test_no_schema_ref_no_dataclass(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /ping:
+                get:
+                  responses:
+                    "200": {description: OK}
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        assert "dataclass" not in (out / "ping.ex.get.py").read_text(encoding="utf-8")
+
+    def test_all_required_fields_no_optional_import(self, tmp_path):
+        # All fields required + non-nullable → opt=False → no Optional import needed.
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /items:
+                get:
+                  responses:
+                    "200":
+                      content:
+                        application/json:
+                          schema:
+                            $ref: "#/components/schemas/Item"
+            components:
+              schemas:
+                Item:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "items.ex.get.py").read_text(encoding="utf-8")
+        assert "class Item:" in content
+        assert "from typing import Optional" not in content
+
+    def test_non_object_schema_no_dataclass_block(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /tags:
+                get:
+                  responses:
+                    "200":
+                      content:
+                        application/json:
+                          schema:
+                            $ref: "#/components/schemas/TagList"
+            components:
+              schemas:
+                TagList:
+                  type: array
+                  items:
+                    type: string
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        assert "@dataclass" not in (out / "tags.ex.get.py").read_text(encoding="utf-8")
+
+    def test_nested_refs_all_included(self, tmp_path):
+        spec = self._spec(
+            tmp_path,
+            """\
+            openapi: "3.0.3"
+            info: {title: T, version: "1.0"}
+            paths:
+              /orders:
+                post:
+                  requestBody:
+                    content:
+                      application/json:
+                        schema:
+                          $ref: "#/components/schemas/Order"
+                  responses:
+                    "201": {description: Created}
+            components:
+              schemas:
+                Order:
+                  type: object
+                  properties:
+                    item:
+                      $ref: "#/components/schemas/Item"
+                Item:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+            """,
+        )
+        out = tmp_path / "out"
+        scaffold_from_openapi(spec, out)
+        content = (out / "orders.ex.post.py").read_text(encoding="utf-8")
+        assert "class Order:" in content
+        assert "class Item:" in content
+
+
+# ---------------------------------------------------------------------------
+# _hint_to_openapi
+# ---------------------------------------------------------------------------
+
+
+class TestHintToOpenapi:
+    def test_none_hint(self):
+        assert _hint_to_openapi(None) == {}
+
+    def test_str(self):
+        assert _hint_to_openapi(str) == {"type": "string"}
+
+    def test_int(self):
+        assert _hint_to_openapi(int) == {"type": "integer"}
+
+    def test_float(self):
+        assert _hint_to_openapi(float) == {"type": "number"}
+
+    def test_bool(self):
+        assert _hint_to_openapi(bool) == {"type": "boolean"}
+
+    def test_list(self):
+        assert _hint_to_openapi(list) == {"type": "array"}
+
+    def test_dict(self):
+        assert _hint_to_openapi(dict) == {"type": "object"}
+
+    def test_bytes(self):
+        assert _hint_to_openapi(bytes) == {"type": "string", "format": "binary"}
+
+    def test_unknown_type(self):
+        class Foo:
+            pass
+
+        assert _hint_to_openapi(Foo) == {}
+
+    def test_optional_str(self):
+        from typing import Optional
+
+        assert _hint_to_openapi(Optional[str]) == {"type": "string", "nullable": True}
+
+    def test_list_of_int(self):
+        from typing import List
+
+        assert _hint_to_openapi(List[int]) == {"type": "array", "items": {"type": "integer"}}
+
+    def test_bare_list_generic(self):
+        result = _hint_to_openapi(list[str])
+        assert result == {"type": "array", "items": {"type": "string"}}
+
+    def test_dict_generic(self):
+        assert _hint_to_openapi(dict[str, int]) == {"type": "object"}
+
+    def test_typing_List_without_type_param(self):
+        import typing
+
+        # typing.List (no args) has __origin__=list but __args__=None → {"type": "array"}
+        assert _hint_to_openapi(typing.List) == {"type": "array"}
+
+    def test_union_multiple_non_none_returns_empty(self):
+        from typing import Union
+
+        assert _hint_to_openapi(Union[str, int]) == {}
+
+
+# ---------------------------------------------------------------------------
+# _dataclass_to_openapi_schema
+# ---------------------------------------------------------------------------
+
+
+class TestDataclassToOpenapiSchema:
+    def test_basic_dataclass(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Point:
+            x: float
+            y: float
+
+        schema = _dataclass_to_openapi_schema(Point)
+        assert schema["type"] == "object"
+        assert schema["properties"]["x"] == {"type": "number"}
+        assert set(schema["required"]) == {"x", "y"}
+
+    def test_optional_fields_not_in_required(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        @dataclass
+        class Item:
+            name: str
+            description: Optional[str] = None
+
+        schema = _dataclass_to_openapi_schema(Item)
+        assert "name" in schema["required"]
+        assert "description" not in schema.get("required", [])
+        assert schema["properties"]["description"] == {"type": "string", "nullable": True}
+
+    def test_no_required_fields_omits_required_key(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        @dataclass
+        class Config:
+            debug: Optional[bool] = None
+
+        assert "required" not in _dataclass_to_openapi_schema(Config)
+
+    def test_get_type_hints_failure_returns_empty_properties(self):
+        from dataclasses import dataclass
+        from unittest.mock import patch
+
+        @dataclass
+        class Bad:
+            x: int
+
+        with patch("cylutils.openapi.inspect.typing.get_type_hints", side_effect=NameError):
+            schema = _dataclass_to_openapi_schema(Bad)
+        assert schema["properties"]["x"] == {}
+
+
+# ---------------------------------------------------------------------------
+# _extract_dataclass_schemas
+# ---------------------------------------------------------------------------
+
+
+class TestExtractDataclassSchemas:
+    def test_no_dataclasses_returns_empty(self, tmp_path):
+        handler = tmp_path / "items.ex.get.py"
+        handler.write_text("def main(response): pass\n", encoding="utf-8")
+        route = RouteInfo(path="/items", method="GET", handler_file=handler, module_name="items.ex.get")
+        assert _extract_dataclass_schemas(_load_module(route)) == {}
+
+    def test_finds_locally_defined_dataclass(self, tmp_path):
+        handler = tmp_path / "items.ex.get.py"
+        handler.write_text(
+            "from dataclasses import dataclass\n@dataclass\nclass Item:\n    name: str\ndef main(response): pass\n",
+            encoding="utf-8",
+        )
+        route = RouteInfo(path="/items", method="GET", handler_file=handler, module_name="items.ex.get")
+        schemas = _extract_dataclass_schemas(_load_module(route))
+        assert "Item" in schemas
+        assert schemas["Item"]["type"] == "object"
+
+    def test_non_dataclass_class_skipped(self, tmp_path):
+        # Loop condition is False when a class exists but is not a dataclass.
+        handler = tmp_path / "items.ex.get.py"
+        handler.write_text(
+            "class Regular: pass\ndef main(response): pass\n",
+            encoding="utf-8",
+        )
+        route = RouteInfo(path="/items", method="GET", handler_file=handler, module_name="items.ex.get")
+        assert _extract_dataclass_schemas(_load_module(route)) == {}
+
+
+# ---------------------------------------------------------------------------
+# _load_module
+# ---------------------------------------------------------------------------
+
+
+class TestLoadModule:
+    def test_returns_module_on_success(self, tmp_path):
+        handler = tmp_path / "x.ex.get.py"
+        handler.write_text("sentinel = 99\ndef main(response): pass\n", encoding="utf-8")
+        route = RouteInfo(path="/x", method="GET", handler_file=handler, module_name="x.ex.get")
+        module = _load_module(route)
+        assert module is not None and module.sentinel == 99
+
+    def test_returns_none_when_spec_is_none(self, tmp_path):
+        route = RouteInfo(path="/x", method="GET", handler_file=tmp_path / "x.ex.get.py", module_name="x.ex.get")
+        with patch("cylutils.openapi.inspect.importlib.util.spec_from_file_location", return_value=None):
+            assert _load_module(route) is None
+
+    def test_returns_none_when_loader_is_none(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        route = RouteInfo(path="/x", method="GET", handler_file=tmp_path / "x.ex.get.py", module_name="x.ex.get")
+        mock_spec = MagicMock()
+        mock_spec.loader = None
+        with patch("cylutils.openapi.inspect.importlib.util.spec_from_file_location", return_value=mock_spec):
+            assert _load_module(route) is None
+
+    def test_load_handler_returns_main_function(self, tmp_path):
+        handler = tmp_path / "y.ex.get.py"
+        handler.write_text("def main(response): pass\n", encoding="utf-8")
+        route = RouteInfo(path="/y", method="GET", handler_file=handler, module_name="y.ex.get")
+        assert callable(_load_handler(route))
+
+
+# ---------------------------------------------------------------------------
+# generate_openapi — components/schemas from dataclasses
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateOpenapiSchemas:
+    def test_no_schemas_no_components_key(self, tmp_path):
+        app_dir = tmp_path / "myapp"
+        app_dir.mkdir()
+        _write(app_dir / "items.ex.get.py", "def main(response): pass\n")
+        assert "components" not in generate_openapi(app_dir)
+
+    def test_dataclass_appears_in_components_schemas(self, tmp_path):
+        app_dir = tmp_path / "myapp"
+        app_dir.mkdir()
+        _write(
+            app_dir / "items.ex.get.py",
+            "from dataclasses import dataclass\n@dataclass\nclass Item:\n    name: str\ndef main(response): pass\n",
+        )
+        doc = generate_openapi(app_dir)
+        assert "components" in doc
+        schemas = doc["components"]["schemas"]
+        assert "Item" in schemas and schemas["Item"]["type"] == "object"
+
+    def test_schemas_deduplicated_across_routes(self, tmp_path):
+        app_dir = tmp_path / "myapp"
+        app_dir.mkdir()
+        dc = "from dataclasses import dataclass\n@dataclass\nclass Item:\n    name: str\ndef main(response): pass\n"
+        _write(app_dir / "items.ex.get.py", dc)
+        _write(app_dir / "items.ex.post.py", dc)
+        doc = generate_openapi(app_dir)
+        assert list(doc["components"]["schemas"].keys()).count("Item") == 1
