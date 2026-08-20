@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-dependencies = ["cylinder", "waitress", "click", "questionary"]
+dependencies = ["cylinder", "waitress", "click", "questionary", "pyyaml"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pre-commit"]
@@ -35,8 +35,10 @@ email = "nicholas@tier2.tech"
 Homepage = "https://github.com/plasmacan/cylutils"
 
 [tool.setuptools]
-packages = ["cylutils"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools_scm]
 

@@ -77,5 +77,49 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
     click.echo("✅ Done!")
 
 
+@cli.group()
+def openapi():
+    """Generate and scaffold from OpenAPI specifications."""
+    pass
+
+
+@openapi.command("export")
+@click.argument("app-path", type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, help="Write to file instead of stdout.")
+@click.option("--title", default="Cylinder App", show_default=True, help="API title.")
+@click.option("--api-version", default="1.0.0", show_default=True, help="API version.")
+def openapi_export(app_path, output, title, api_version):
+    """Export a Cylinder app's routes as an OpenAPI 3.0 YAML document."""
+    import yaml
+
+    from .openapi.export import generate_openapi
+
+    doc = generate_openapi(app_path, title=title, version=api_version)
+    result = yaml.dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False)
+
+    if output:
+        import pathlib
+
+        pathlib.Path(output).write_text(result, encoding="utf-8")
+        click.echo(f"Written to {output}")
+    else:
+        click.echo(result, nl=False)
+
+
+@openapi.command("scaffold")
+@click.argument("spec-file", type=click.Path(exists=True))
+@click.argument("output-dir", type=click.Path())
+@click.option("--overwrite", is_flag=True, default=False, help="Overwrite existing files.")
+def openapi_scaffold(spec_file, output_dir, overwrite):
+    """Scaffold Cylinder handler files from an OpenAPI spec."""
+    from .openapi.scaffold import scaffold_from_openapi
+
+    created = scaffold_from_openapi(spec_file, output_dir, overwrite=overwrite)
+    for f in created:
+        click.echo(f"Created: {f}")
+    if not created:
+        click.echo("No files created.")
+
+
 if __name__ == "__main__":
     cli()
