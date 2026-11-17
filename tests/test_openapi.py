@@ -9,9 +9,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 from typing import Optional
-from click.testing import CliRunner
 
-from cylutils.cli import cli
 from cylutils.openapi import (
     CYLINDER_PARAMS,
     RouteInfo,
@@ -679,47 +677,43 @@ class TestScaffoldFromOpenapi:
 
 
 class TestCliOpenapiExport:
-    def test_outputs_yaml_to_stdout(self, tmp_path):
+    def test_outputs_yaml_to_stdout(self, run_cli, tmp_path):
         app_dir = tmp_path / "myapp"
         app_dir.mkdir()
         _write(app_dir / "items.ex.get.py", "def main(response): pass\n")
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["openapi", "export", str(app_dir)])
+        result = run_cli(["openapi", "export", str(app_dir)])
         assert result.exit_code == 0
         doc = yaml.safe_load(result.output)
         assert doc["openapi"] == "3.0.3"
         assert "/items" in doc["paths"]
 
-    def test_writes_to_file_with_output_flag(self, tmp_path):
+    def test_writes_to_file_with_output_flag(self, run_cli, tmp_path):
         app_dir = tmp_path / "myapp"
         app_dir.mkdir()
         _write(app_dir / "items.ex.get.py", "def main(response): pass\n")
         out_file = tmp_path / "openapi.yaml"
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["openapi", "export", str(app_dir), "-o", str(out_file)])
+        result = run_cli(["openapi", "export", str(app_dir), "-o", str(out_file)])
         assert result.exit_code == 0
         assert out_file.exists()
         doc = yaml.safe_load(out_file.read_text(encoding="utf-8"))
         assert "paths" in doc
 
-    def test_custom_title_and_version(self, tmp_path):
+    def test_custom_title_and_version(self, run_cli, tmp_path):
         app_dir = tmp_path / "myapp"
         app_dir.mkdir()
         _write(app_dir / "x.ex.get.py", "def main(response): pass\n")
 
-        runner = CliRunner()
-        result = runner.invoke(
-            cli,
-            ["openapi", "export", str(app_dir), "--title", "Cool API", "--api-version", "3.0"],
+        result = run_cli(
+            ["openapi", "export", str(app_dir), "--title", "Cool API", "--api-version", "3.0"]
         )
         assert result.exit_code == 0
         doc = yaml.safe_load(result.output)
         assert doc["info"]["title"] == "Cool API"
         assert doc["info"]["version"] == "3.0"
 
-    def test_ref_flag_loads_reference_spec(self, tmp_path):
+    def test_ref_flag_loads_reference_spec(self, run_cli, tmp_path):
         app_dir = tmp_path / "myapp"
         app_dir.mkdir()
         _write(app_dir / "x.ex.get.py", "def main(response): pass\n")
@@ -729,10 +723,8 @@ class TestCliOpenapiExport:
             encoding="utf-8",
         )
 
-        runner = CliRunner()
-        result = runner.invoke(
-            cli,
-            ["openapi", "export", str(app_dir), "--ref", str(ref_file)],
+        result = run_cli(
+            ["openapi", "export", str(app_dir), "--ref", str(ref_file)]
         )
         assert result.exit_code == 0
         doc = yaml.safe_load(result.output)
@@ -763,23 +755,21 @@ class TestCliOpenapiScaffold:
         )
         return p
 
-    def test_creates_files_and_reports_them(self, tmp_path):
+    def test_creates_files_and_reports_them(self, run_cli, tmp_path):
         spec = self._spec_file(tmp_path)
         out = tmp_path / "out"
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["openapi", "scaffold", str(spec), str(out)])
+        result = run_cli(["openapi", "scaffold", str(spec), str(out)])
         assert result.exit_code == 0
         assert "Created:" in result.output
         assert (out / "widgets.ex.get.py").exists()
 
-    def test_reports_no_files_created_on_second_run(self, tmp_path):
+    def test_reports_no_files_created_on_second_run(self, run_cli, tmp_path):
         spec = self._spec_file(tmp_path)
         out = tmp_path / "out"
 
-        runner = CliRunner()
-        runner.invoke(cli, ["openapi", "scaffold", str(spec), str(out)])
-        result = runner.invoke(cli, ["openapi", "scaffold", str(spec), str(out)])
+        run_cli(["openapi", "scaffold", str(spec), str(out)])
+        result = run_cli(["openapi", "scaffold", str(spec), str(out)])
         assert result.exit_code == 0
         assert "No files created" in result.output
 

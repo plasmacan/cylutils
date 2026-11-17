@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-dependencies = ["cylinder", "waitress", "click", "questionary", "pyyaml"]
+dependencies = ["cylinder", "waitress", "questionary", "pyyaml"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pre-commit"]

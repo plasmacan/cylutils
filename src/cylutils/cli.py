@@ -1,12 +1,15 @@
+import argparse
 import os
+import pathlib
 import sys
 from typing import Any, Callable
 
-import click
 import questionary
 
 from .features import ADDONS, STORE_TYPES, TEMPLATE_ENGINES
 from .project import scaffold
+
+OPENAPI_HELP = "Generate and scaffold from OpenAPI specifications."
 
 
 def _ask(value: Any, question_fn: Callable[[], Any]) -> Any:
@@ -21,46 +24,47 @@ def _ask(value: Any, question_fn: Callable[[], Any]) -> Any:
     return result
 
 
-@click.group()
-def cli():
-    pass
+def _existing_path(value: str) -> str:
+    """argparse type for a path that must already exist."""
+    if not os.path.exists(value):
+        raise argparse.ArgumentTypeError(f"path '{value}' does not exist")
+    return value
 
 
-@cli.command()
-@click.argument("project-name", required=False)
-@click.argument("app-name", required=False)
-@click.option("--store-type", type=click.Choice(list(STORE_TYPES)), required=False)
-@click.option("--template-engine", type=click.Choice(list(TEMPLATE_ENGINES)))
-@click.option("--add-sessions", is_flag=True, required=False, default=None)
-@click.option("--add-g", is_flag=True, required=False, default=None)
-@click.option("--add-http", is_flag=True, required=False, default=None)
-def start_project(project_name, app_name, store_type, template_engine, add_sessions, add_g, add_http):
-    click.echo("⚡CYLINDER QUICKSTART⚡")
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+
+def start_project(args: argparse.Namespace) -> None:
+    """Scaffold a new Cylinder project, prompting for anything not given."""
+    print("⚡CYLINDER QUICKSTART⚡", flush=True)  # before any prompt or stderr error
 
     project_name = _ask(
-        project_name, lambda: questionary.text("Project name:", default="my-project").ask()
+        args.project_name, lambda: questionary.text("Project name:", default="my-project").ask()
     )
     if os.path.exists(project_name):
         print(f"Error: Directory '{project_name}' already exists.", file=sys.stderr)
         sys.exit(1)
 
-    app_name = _ask(app_name, lambda: questionary.text("App name:", default="my-app").ask())
+    app_name = _ask(args.app_name, lambda: questionary.text("App name:", default="my-app").ask())
     store_type = _ask(
-        store_type, lambda: questionary.select("Select a store type:", choices=list(STORE_TYPES)).ask()
+        args.store_type,
+        lambda: questionary.select("Select a store type:", choices=list(STORE_TYPES)).ask(),
     )
     template_engine = _ask(
-        template_engine,
+        args.template_engine,
         lambda: questionary.select("Select a template engine:", choices=list(TEMPLATE_ENGINES)).ask(),
     )
     add_g = _ask(
-        add_g,
+        args.add_g,
         lambda: questionary.confirm("Would you like to include a global context variable (g)?").ask(),
     )
     add_sessions = _ask(
-        add_sessions, lambda: questionary.confirm("Would you like to include sessions?").ask()
+        args.add_sessions, lambda: questionary.confirm("Would you like to include sessions?").ask()
     )
     add_http = _ask(
-        add_http,
+        args.add_http,
         lambda: questionary.confirm("Would you like to include a shared HTTP client (urllib3)?").ask(),
     )
 
@@ -82,69 +86,128 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
         selected_features.append(ADDONS["http"])
 
     scaffold(project_name, app_name, selected_features)
-    click.echo("✅ Done!")
+    print("✅ Done!")
 
 
-@cli.group()
-def openapi():
-    """Generate and scaffold from OpenAPI specifications."""
-    pass
-
-
-@openapi.command("export")
-@click.argument("app-path", type=click.Path(exists=True))
-@click.option("--output", "-o", default=None, help="Write to file instead of stdout.")
-@click.option("--title", default="Cylinder App", show_default=True, help="API title.")
-@click.option("--api-version", default="1.0.0", show_default=True, help="API version.")
-@click.option(
-    "--ref",
-    "reference",
-    type=click.Path(exists=True),
-    default=None,
-    help="Reference spec to source info, servers, and security from.",
-)
-def openapi_export(app_path, output, title, api_version, reference):
+def openapi_export(args: argparse.Namespace) -> None:
     """Export a Cylinder app's routes as an OpenAPI 3.0 YAML document."""
-    import pathlib
-
     import yaml
 
     from .openapi.export import generate_openapi
 
     ref_spec = None
-    if reference:
-        ref_spec = yaml.safe_load(pathlib.Path(reference).read_text(encoding="utf-8"))
+    if args.reference:
+        ref_spec = yaml.safe_load(pathlib.Path(args.reference).read_text(encoding="utf-8"))
 
-    doc = generate_openapi(app_path, title=title, version=api_version, reference=ref_spec)
+    doc = generate_openapi(args.app_path, title=args.title, version=args.api_version, reference=ref_spec)
     result = yaml.dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False)
 
-    if output:
-        pathlib.Path(output).write_text(result, encoding="utf-8")
-        click.echo(f"Written to {output}")
+    if args.output:
+        pathlib.Path(args.output).write_text(result, encoding="utf-8")
+        print(f"Written to {args.output}")
     else:
-        click.echo(result, nl=False)
+        sys.stdout.write(result)
 
 
-@openapi.command("scaffold")
-@click.argument("spec-file", type=click.Path(exists=True))
-@click.argument("output-dir", type=click.Path())
-@click.option("--overwrite", is_flag=True, default=False, help="Overwrite existing files.")
-def openapi_scaffold(spec_file, output_dir, overwrite):
+def openapi_scaffold(args: argparse.Namespace) -> None:
     """Scaffold Cylinder handler files from an OpenAPI spec."""
     from .openapi.scaffold import scaffold_from_openapi
 
-    created = scaffold_from_openapi(spec_file, output_dir, overwrite=overwrite)
+    created = scaffold_from_openapi(args.spec_file, args.output_dir, overwrite=args.overwrite)
     for f in created:
-        click.echo(f"Created: {f}")
+        print(f"Created: {f}")
     if not created:
-        click.echo("No files created.")
+        print("No files created.")
+
+
+def openapi_ui(args: argparse.Namespace) -> None:
+    """Generate a static OpenAPI UI with Swagger UI cdn + spec file."""
+    # Not implemented yet.
+
+
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+
+
+def _add_command(
+    commands: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    name: str,
+    handler: Callable[[argparse.Namespace], None],
+) -> argparse.ArgumentParser:
+    """Add a subcommand whose help and description come from the handler's docstring."""
+    help_text = (handler.__doc__ or "").strip()
+    command = commands.add_parser(name, help=help_text, description=help_text)
+    command.set_defaults(handler=handler)
+    return command
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cylutils", description="Utilities for plasmacan/cylinder applications."
+    )
+    parser.set_defaults(parser=parser)
+    commands = parser.add_subparsers(title="commands", metavar="COMMAND")
+
+    start = _add_command(commands, "start-project", start_project)
+    start.epilog = "Anything not given on the command line is asked for interactively."
+    start.add_argument("project_name", nargs="?", metavar="PROJECT_NAME")
+    start.add_argument("app_name", nargs="?", metavar="APP_NAME")
+    start.add_argument("--store-type", choices=list(STORE_TYPES))
+    start.add_argument("--template-engine", choices=list(TEMPLATE_ENGINES))
+    # default=None (not False) so an omitted flag means "ask", not "no".
+    start.add_argument(
+        "--add-sessions", action="store_true", default=None, help="Include cookie sessions."
+    )
+    start.add_argument(
+        "--add-g", action="store_true", default=None, help="Include a per-request g namespace."
+    )
+    start.add_argument(
+        "--add-http",
+        action="store_true",
+        default=None,
+        help="Include a shared HTTP client (urllib3).",
+    )
+
+    openapi = commands.add_parser("openapi", help=OPENAPI_HELP, description=OPENAPI_HELP)
+    openapi.set_defaults(parser=openapi)
+    openapi_commands = openapi.add_subparsers(title="commands", metavar="COMMAND")
+
+    export = _add_command(openapi_commands, "export", openapi_export)
+    export.add_argument("app_path", type=_existing_path, metavar="APP_PATH")
+    export.add_argument("-o", "--output", help="Write to file instead of stdout.")
+    export.add_argument("--title", default="Cylinder App", help="API title. (default: %(default)s)")
+    export.add_argument("--api-version", default="1.0.0", help="API version. (default: %(default)s)")
+    export.add_argument(
+        "--ref",
+        dest="reference",
+        type=_existing_path,
+        metavar="PATH",
+        help="Reference spec to source info, servers, and security from.",
+    )
+
+    scaffold_cmd = _add_command(openapi_commands, "scaffold", openapi_scaffold)
+    scaffold_cmd.add_argument("spec_file", type=_existing_path, metavar="SPEC_FILE")
+    scaffold_cmd.add_argument("output_dir", metavar="OUTPUT_DIR")
+    scaffold_cmd.add_argument("--overwrite", action="store_true", help="Overwrite existing files.")
+
+    ui = _add_command(openapi_commands, "ui", openapi_ui)
+    ui.add_argument("spec_file", type=_existing_path, metavar="SPEC_FILE")
+    ui.add_argument("target_dir", metavar="TARGET_DIR")
+
+    return parser
+
+
+def cli(argv: list[str] | None = None) -> None:
+    """Run the cylutils command line (argv defaults to sys.argv[1:])."""
+    args = build_parser().parse_args(argv)
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        # A command group was given without a subcommand: show its help, as a usage error.
+        args.parser.print_help(sys.stderr)
+        sys.exit(2)
+    handler(args)
 
 
 if __name__ == "__main__":
     cli()
-
-@openapi.command("ui")
-@click.argument("spec-file", type=click.Path(exists=True))
-@click.argument("target-dir", type=click.Path())
-def openapi_ui(spec_file, target_dir):
-    """Generate a static OpenAPI UI with Swagger UI cdn + spec file."""
