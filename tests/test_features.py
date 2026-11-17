@@ -1,5 +1,14 @@
 from cylutils.feature import Feature
-from cylutils.features import ADDONS, SIMPLE_STORE, JINJA2, ADD_G, SESSIONS, STORE_TYPES, TEMPLATE_ENGINES
+from cylutils.features import (
+    ADD_G,
+    ADD_HTTP,
+    ADDONS,
+    JINJA2,
+    SESSIONS,
+    SIMPLE_STORE,
+    STORE_TYPES,
+    TEMPLATE_ENGINES,
+)
 
 
 class TestRegistryKeys:
@@ -9,8 +18,8 @@ class TestRegistryKeys:
     def test_template_engines_has_jinja2_and_none(self):
         assert set(TEMPLATE_ENGINES.keys()) == {"jinja2", "none"}
 
-    def test_addons_has_g_and_sessions(self):
-        assert set(ADDONS.keys()) == {"g", "sessions"}
+    def test_addons_has_g_sessions_and_http(self):
+        assert set(ADDONS.keys()) == {"g", "sessions", "http"}
 
 
 class TestRegistryValues:
@@ -64,6 +73,37 @@ class TestJinja2Feature:
         assert len(JINJA2.extra_files) == 2
         for src, _ in JINJA2.extra_files:
             assert src.exists(), f"Source file missing: {src}"
+
+    def test_templates_go_in_per_app_folder(self):
+        template_dsts = [dst for _, dst in JINJA2.extra_files if dst.startswith("templates/")]
+        assert template_dsts == ["templates/{app_name}/jinja2-example.html"]
+
+    def test_imports_urllib_parse_submodule(self):
+        assert "import urllib.parse" in JINJA2.imports
+        assert "import urllib" not in JINJA2.imports
+
+    def test_registers_filters(self):
+        init = "\n".join(JINJA2.init_code)
+        for name in ("basename", "ymd_date", "hm_time", "escapejs"):
+            assert f'jinja_env.filters["{name}"]' in init
+
+    def test_render_template_factory_is_cached(self):
+        init = "\n".join(JINJA2.init_code)
+        assert "@functools.cache\ndef render_template_factory(" in init
+
+    def test_render_template_param_uses_app_name(self):
+        assert '"render_template": render_template_factory("# APPNAME #")' in JINJA2.params
+
+
+class TestAddHttpFeature:
+    def test_has_urllib3_import(self):
+        assert "import urllib3" in ADD_HTTP.imports
+
+    def test_has_pool_manager_init(self):
+        assert any("urllib3.PoolManager(" in line for line in ADD_HTTP.init_code)
+
+    def test_has_http_param(self):
+        assert '"http": http' in ADD_HTTP.params
 
 
 class TestAddGFeature:

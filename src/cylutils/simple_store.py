@@ -67,6 +67,9 @@ class Store:
         """
         Put a key-value pair into the store. If the key already exists, it will not be updated.
 
+        To change an existing value, use patch() (pass create_if_missing=True to upsert; note that it
+        merges dicts and appends to lists/tuples/sets rather than replacing them), or increment() for counters.
+
         Parameters:
             k (str): The key to store.
             val (any): The value to store.
@@ -112,7 +115,12 @@ class Store:
         """
         Patch a key-value pair in the store.
 
-        For dicts, the new value is merged into the existing value. For all other types, the value is replaced.
+        How the new value is applied depends on the existing value's type:
+            - dict: the new dict is merged into it (dict.update).
+            - list/tuple/set: the new items are appended (the existing type is kept).
+            - anything else: the value is replaced.
+        With type_checking on (the default), a val of a different type is rejected; with it off,
+        a val that doesn't fit the rules above (e.g. a list onto a dict) replaces the value.
 
         Parameters:
             k (str): The key to patch.

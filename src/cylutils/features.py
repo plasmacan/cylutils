@@ -19,19 +19,56 @@ SIMPLE_STORE = Feature(
 )
 
 JINJA2 = Feature(
-    imports=["import jinja2", "import urllib"],
+    imports=[
+        "import functools",
+        "import os",
+        "import urllib.parse",
+        "from datetime import datetime",
+        "import jinja2",
+        "from markupsafe import Markup",
+    ],
+    # Raw string so the \u escapes below land in server.py verbatim.
     init_code=[
-        """
-jinja_env = jinja2.Environment(
-    loader=jinja2.FileSystemLoader("templates"),
-    auto_reload=True,
-    autoescape=jinja2.select_autoescape(),
+        r'''
+def ymd_with_time_title(value):
+    """
+    Split a datetime (or a date/datetime string) into ("YYYY-MM-DD", "HH:MM"),
+    e.g. to show the date with the time in a title tooltip.
+    Returns ("-", "") if the value can't be parsed.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(str(value), fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            return "-", ""
+    return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
+
+
+def ymd_date(value):
+    return ymd_with_time_title(value)[0]
+
+
+def hm_time(value):
+    return ymd_with_time_title(value)[1]
+
+
+# Characters rewritten as \uXXXX so a value can't break out of a JS string literal,
+# whether it sits in a <script> block or an on* event attribute.
+_JS_ESCAPES = str.maketrans(
+    {ch: f"\\u{ord(ch):04X}" for ch in "\\'\"<>&=-;`\u2028\u2029" + "".join(map(chr, range(32)))}
 )
 
 
-def render_template(template_name, **context):
-    template = jinja_env.get_template(template_name)
-    return template.render(**context)
+def escapejs(value):
+    """Escape a value for use inside a quoted JS string, e.g. "{{ name|escapejs }}"."""
+    # Markup stops autoescape from HTML-escaping the result a second time.
+    return Markup(str(value).translate(_JS_ESCAPES))
 
 
 def url_for(endpoint, **query_params):
@@ -44,9 +81,28 @@ def url_for(endpoint, **query_params):
     return path
 
 
-jinja_env.globals["url_for"] = url_for"""
+@functools.cache
+def render_template_factory(template_root):
+    """Return a render_template function for templates/<template_root>/, built once per app."""
+    jinja_env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(f"templates/{template_root}"),
+        auto_reload=True,
+        autoescape=jinja2.select_autoescape(),
+    )
+
+    jinja_env.filters["basename"] = os.path.basename
+    jinja_env.filters["ymd_date"] = ymd_date
+    jinja_env.filters["hm_time"] = hm_time
+    jinja_env.filters["escapejs"] = escapejs
+    jinja_env.globals["url_for"] = url_for
+
+    def render_template(template_name, **context):
+        template = jinja_env.get_template(template_name)
+        return template.render(**context)
+
+    return render_template'''
     ],
-    params=['"render_template": render_template'],
+    params=['"render_template": render_template_factory("# APPNAME #")'],
     generated_links=['<a href="/jinja2-example">View Jinja2 Example</a>'],
     extra_files=[
         (
@@ -55,7 +111,7 @@ jinja_env.globals["url_for"] = url_for"""
         ),
         (
             _EXAMPLES / "jinja2" / "jinja2-example.html",
-            "templates/jinja2-example.html",
+            "templates/{app_name}/jinja2-example.html",
         ),
     ],
 )
@@ -63,6 +119,12 @@ jinja_env.globals["url_for"] = url_for"""
 ADD_G = Feature(
     imports=["from types import SimpleNamespace"],
     params=['"g": SimpleNamespace()'],
+)
+
+ADD_HTTP = Feature(
+    imports=["import urllib3"],
+    init_code=["http = urllib3.PoolManager(maxsize=8)"],
+    params=['"http": http'],
 )
 
 SESSIONS = Feature(
@@ -128,4 +190,5 @@ TEMPLATE_ENGINES: dict[str, Feature | None] = {
 ADDONS: dict[str, Feature] = {
     "g": ADD_G,
     "sessions": SESSIONS,
+    "http": ADD_HTTP,
 }

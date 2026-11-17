@@ -3,7 +3,7 @@ import pathlib
 import pytest
 
 from cylutils.feature import Feature
-from cylutils.features import ADD_G, ADDONS, JINJA2, SESSIONS, SIMPLE_STORE
+from cylutils.features import ADD_G, ADD_HTTP, ADDONS, JINJA2, SESSIONS, SIMPLE_STORE
 from cylutils.project import _unique_ordered, scaffold
 
 
@@ -117,9 +117,21 @@ class TestScaffoldJinja2:
         scaffold("proj", "myapp", [JINJA2])
         assert (project_dir / "proj" / "apps" / "myapp" / "jinja2-example.ex.get.py").is_file()
 
-    def test_template_file_copied(self, project_dir):
+    def test_template_file_copied_to_app_folder(self, project_dir):
         scaffold("proj", "myapp", [JINJA2])
-        assert (project_dir / "proj" / "templates" / "jinja2-example.html").is_file()
+        assert (project_dir / "proj" / "templates" / "myapp" / "jinja2-example.html").is_file()
+        assert not (project_dir / "proj" / "templates" / "jinja2-example.html").exists()
+
+    def test_render_template_factory_gets_app_name(self, project_dir):
+        scaffold("proj", "myapp", [JINJA2])
+        content = _read(project_dir / "proj" / "server.py")
+        assert '"render_template": render_template_factory("myapp")' in content
+        assert "# APPNAME #" not in content
+
+    def test_server_imports_urllib_parse(self, project_dir):
+        scaffold("proj", "myapp", [JINJA2])
+        content = _read(project_dir / "proj" / "server.py")
+        assert "import urllib.parse" in content.splitlines()
 
     def test_server_contains_jinja2_import(self, project_dir):
         scaffold("proj", "myapp", [JINJA2])
@@ -147,6 +159,23 @@ class TestScaffoldAddG:
         scaffold("proj", "myapp", [ADD_G])
         content = _read(project_dir / "proj" / "server.py")
         assert '"g"' in content
+
+
+class TestScaffoldAddHttp:
+    def test_server_contains_urllib3_import(self, project_dir):
+        scaffold("proj", "myapp", [ADD_HTTP])
+        content = _read(project_dir / "proj" / "server.py")
+        assert "import urllib3" in content
+
+    def test_server_creates_pool_manager_once(self, project_dir):
+        scaffold("proj", "myapp", [ADD_HTTP])
+        content = _read(project_dir / "proj" / "server.py")
+        assert content.count("urllib3.PoolManager(") == 1
+
+    def test_server_contains_http_param(self, project_dir):
+        scaffold("proj", "myapp", [ADD_HTTP])
+        content = _read(project_dir / "proj" / "server.py")
+        assert '"http": http' in content
 
 
 class TestScaffoldSessions:
@@ -184,11 +213,17 @@ class TestScaffoldDeduplication:
 
 class TestScaffoldAllFeatures:
     def test_all_features_together(self, project_dir):
-        scaffold("proj", "myapp", [SIMPLE_STORE, JINJA2, ADD_G, SESSIONS])
+        scaffold("proj", "myapp", [SIMPLE_STORE, JINJA2, ADD_G, SESSIONS, ADD_HTTP])
         content = _read(project_dir / "proj" / "server.py")
         assert "simple_store" in content
         assert "jinja2" in content
         assert "SimpleNamespace" in content
         assert "secrets" in content
+        assert "urllib3" in content
         assert (project_dir / "proj" / "apps" / "myapp" / "storeexample.ex.get.py").is_file()
         assert (project_dir / "proj" / "apps" / "myapp" / "jinja2-example.ex.get.py").is_file()
+
+    def test_generated_server_is_valid_python(self, project_dir):
+        scaffold("proj", "myapp", [SIMPLE_STORE, JINJA2, ADD_G, SESSIONS, ADD_HTTP])
+        content = _read(project_dir / "proj" / "server.py")
+        compile(content, "server.py", "exec")

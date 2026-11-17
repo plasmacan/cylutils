@@ -33,7 +33,8 @@ def cli():
 @click.option("--template-engine", type=click.Choice(list(TEMPLATE_ENGINES)))
 @click.option("--add-sessions", is_flag=True, required=False, default=None)
 @click.option("--add-g", is_flag=True, required=False, default=None)
-def start_project(project_name, app_name, store_type, template_engine, add_sessions, add_g):
+@click.option("--add-http", is_flag=True, required=False, default=None)
+def start_project(project_name, app_name, store_type, template_engine, add_sessions, add_g, add_http):
     click.echo("⚡CYLINDER QUICKSTART⚡")
 
     project_name = _ask(
@@ -58,6 +59,10 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
     add_sessions = _ask(
         add_sessions, lambda: questionary.confirm("Would you like to include sessions?").ask()
     )
+    add_http = _ask(
+        add_http,
+        lambda: questionary.confirm("Would you like to include a shared HTTP client (urllib3)?").ask(),
+    )
 
     selected_features = []
 
@@ -72,6 +77,9 @@ def start_project(project_name, app_name, store_type, template_engine, add_sessi
 
     if add_sessions:
         selected_features.append(ADDONS["sessions"])
+
+    if add_http:
+        selected_features.append(ADDONS["http"])
 
     scaffold(project_name, app_name, selected_features)
     click.echo("✅ Done!")

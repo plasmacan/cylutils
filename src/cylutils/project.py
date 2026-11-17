@@ -45,13 +45,14 @@ def scaffold(project_name: str, app_name: str, selected_features: list[Feature])
         param_def = "{}"
 
     replacements = {
-        "# APPNAME #": app_name,
         "# IMPORTDEF #": import_def,
         "# INITDEF #": init_def,
         "# APPMAPPARAMS #": app_map_params,
         "# APPMAPDEF #": app_map_def,
         "# PARAMSDEF #": "params = " + param_def,
         "<!--GENERATED LINKS-->": generated_links,
+        # Last, so features can use the app name placeholder in the code they contribute.
+        "# APPNAME #": app_name,
     }
 
     target_dir = pathlib.Path.cwd() / project_name

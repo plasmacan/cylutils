@@ -103,13 +103,36 @@ class TestStartProjectCommand:
         _, _, features = mock_scaffold.call_args[0]
         assert ADDONS["sessions"] in features
 
+    def test_add_http_flag(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result, mock_scaffold = _invoke(
+            [
+                "start-project", "proj", "myapp",
+                "--store-type", "none", "--template-engine", "none",
+                "--add-http",
+            ]
+        )
+        assert result.exit_code == 0
+        _, _, features = mock_scaffold.call_args[0]
+        assert ADDONS["http"] in features
+
+    def test_http_omitted_when_prompt_declined(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result, mock_scaffold = _invoke(
+            ["start-project", "proj", "myapp", "--store-type", "none", "--template-engine", "none"],
+            confirm_returns=False,
+        )
+        assert result.exit_code == 0
+        _, _, features = mock_scaffold.call_args[0]
+        assert ADDONS["http"] not in features
+
     def test_all_features_flags(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result, mock_scaffold = _invoke(
             [
                 "start-project", "proj", "myapp",
                 "--store-type", "simple_store", "--template-engine", "jinja2",
-                "--add-g", "--add-sessions",
+                "--add-g", "--add-sessions", "--add-http",
             ]
         )
         assert result.exit_code == 0
@@ -118,6 +141,7 @@ class TestStartProjectCommand:
         assert JINJA2 in features
         assert ADDONS["g"] in features
         assert ADDONS["sessions"] in features
+        assert ADDONS["http"] in features
 
     def test_existing_directory_exits_with_code_1(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
