@@ -88,18 +88,29 @@ def openapi():
 @click.option("--output", "-o", default=None, help="Write to file instead of stdout.")
 @click.option("--title", default="Cylinder App", show_default=True, help="API title.")
 @click.option("--api-version", default="1.0.0", show_default=True, help="API version.")
-def openapi_export(app_path, output, title, api_version):
+@click.option(
+    "--ref",
+    "reference",
+    type=click.Path(exists=True),
+    default=None,
+    help="Reference spec to source info, servers, and security from.",
+)
+def openapi_export(app_path, output, title, api_version, reference):
     """Export a Cylinder app's routes as an OpenAPI 3.0 YAML document."""
+    import pathlib
+
     import yaml
 
     from .openapi.export import generate_openapi
 
-    doc = generate_openapi(app_path, title=title, version=api_version)
+    ref_spec = None
+    if reference:
+        ref_spec = yaml.safe_load(pathlib.Path(reference).read_text(encoding="utf-8"))
+
+    doc = generate_openapi(app_path, title=title, version=api_version, reference=ref_spec)
     result = yaml.dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False)
 
     if output:
-        import pathlib
-
         pathlib.Path(output).write_text(result, encoding="utf-8")
         click.echo(f"Written to {output}")
     else:
@@ -123,3 +134,9 @@ def openapi_scaffold(spec_file, output_dir, overwrite):
 
 if __name__ == "__main__":
     cli()
+
+@openapi.command("ui")
+@click.argument("spec-file", type=click.Path(exists=True))
+@click.argument("target-dir", type=click.Path())
+def openapi_ui(spec_file, target_dir):
+    """Generate a static OpenAPI UI with Swagger UI cdn + spec file."""

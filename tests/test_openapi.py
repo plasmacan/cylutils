@@ -719,6 +719,26 @@ class TestCliOpenapiExport:
         assert doc["info"]["title"] == "Cool API"
         assert doc["info"]["version"] == "3.0"
 
+    def test_ref_flag_loads_reference_spec(self, tmp_path):
+        app_dir = tmp_path / "myapp"
+        app_dir.mkdir()
+        _write(app_dir / "x.ex.get.py", "def main(response): pass\n")
+        ref_file = tmp_path / "ref.yaml"
+        ref_file.write_text(
+            "info:\n  title: Ref API\n  version: '9.9'\nservers:\n  - url: https://example.com\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["openapi", "export", str(app_dir), "--ref", str(ref_file)],
+        )
+        assert result.exit_code == 0
+        doc = yaml.safe_load(result.output)
+        assert doc["info"]["title"] == "Ref API"
+        assert doc["servers"] == [{"url": "https://example.com"}]
+
 
 # ---------------------------------------------------------------------------
 # CLI — openapi scaffold
@@ -2106,3 +2126,234 @@ class TestGenerateOpenapiSchemas:
         _write(app_dir / "items.ex.post.py", dc)
         doc = generate_openapi(app_dir)
         assert list(doc["components"]["schemas"].keys()).count("Item") == 1
+
+
+# ---------------------------------------------------------------------------
+# _parse_docstring_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestParseDocstringMetadata:
+    def test_empty_string(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        result = _parse_docstring_metadata("")
+        assert result == {"summary": "", "description": "", "parameters": [], "responses": {}}
+
+    def test_summary_only(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        result = _parse_docstring_metadata("List all items.")
+        assert result["summary"] == "List all items."
+        assert result["description"] == ""
+        assert result["parameters"] == []
+
+    def test_summary_and_description(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        result = _parse_docstring_metadata("Short summary.\n\nLonger description here.")
+        assert result["summary"] == "Short summary."
+        assert result["description"] == "Longer description here."
+
+    def test_parameters_section_query(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "List items.\n\nParameters:\n    limit (integer, query): Max results.\n    cursor (string, query)"
+        result = _parse_docstring_metadata(doc)
+        params = {p["name"]: p for p in result["parameters"]}
+        assert params["limit"]["in"] == "query"
+        assert params["limit"]["schema"] == {"type": "integer"}
+        assert params["limit"]["description"] == "Max results."
+        assert "description" not in params["cursor"]
+
+    def test_parameters_section_path_required(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Get item.\n\nParameters:\n    item_id (string, path, required)"
+        result = _parse_docstring_metadata(doc)
+        assert result["parameters"][0]["in"] == "path"
+        assert result["parameters"][0]["required"] is True
+
+    def test_parameters_section_no_annotation(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Op.\n\nParameters:\n    q"
+        result = _parse_docstring_metadata(doc)
+        assert result["parameters"][0]["name"] == "q"
+        assert result["parameters"][0]["in"] == "query"
+
+    def test_responses_section(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Op.\n\nResponses:\n    200: Successful response\n    404: Not found"
+        result = _parse_docstring_metadata(doc)
+        assert result["responses"]["200"] == "Successful response"
+        assert result["responses"]["404"] == "Not found"
+
+    def test_responses_empty_description(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Op.\n\nResponses:\n    204: "
+        result = _parse_docstring_metadata(doc)
+        assert result["responses"]["204"] == ""
+
+    def test_non_matching_indented_param_line_is_skipped(self):
+        # An indented line in the Parameters section that doesn't match the regex
+        # (e.g., a blank indented line or a continuation) should be silently skipped.
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Op.\n\nParameters:\n    limit (integer, query)\n    \nResponses:\n    200: OK"
+        result = _parse_docstring_metadata(doc)
+        assert len(result["parameters"]) == 1
+        assert result["responses"]["200"] == "OK"
+
+    def test_non_matching_indented_response_line_is_skipped(self):
+        from cylutils.openapi.inspect import _parse_docstring_metadata
+
+        doc = "Op.\n\nResponses:\n    200: OK\n    "
+        result = _parse_docstring_metadata(doc)
+        assert result["responses"]["200"] == "OK"
+
+
+# ---------------------------------------------------------------------------
+# _reconstruct_path_params
+# ---------------------------------------------------------------------------
+
+
+class TestReconstructPathParams:
+    def test_no_path_params_unchanged(self):
+        from cylutils.openapi.inspect import _reconstruct_path_params
+
+        assert _reconstruct_path_params("/items", []) == "/items"
+        assert _reconstruct_path_params("/api/v1/users", []) == "/api/v1/users"
+
+    def test_path_param_wraps_in_braces(self):
+        from cylutils.openapi.inspect import _reconstruct_path_params
+
+        params = [{"name": "item_id", "in": "path"}]
+        assert _reconstruct_path_params("/items/item_id", params) == "/items/{item_id}"
+
+    def test_multiple_path_params(self):
+        from cylutils.openapi.inspect import _reconstruct_path_params
+
+        params = [{"name": "org_id", "in": "path"}, {"name": "repo_id", "in": "path"}]
+        result = _reconstruct_path_params("/orgs/org_id/repos/repo_id", params)
+        assert result == "/orgs/{org_id}/repos/{repo_id}"
+
+    def test_non_matching_param_no_change(self):
+        from cylutils.openapi.inspect import _reconstruct_path_params
+
+        params = [{"name": "unknown", "in": "path"}]
+        assert _reconstruct_path_params("/items/item_id", params) == "/items/item_id"
+
+    def test_query_params_ignored(self):
+        from cylutils.openapi.inspect import _reconstruct_path_params
+
+        params = [{"name": "limit", "in": "query"}]
+        assert _reconstruct_path_params("/items/limit", params) == "/items/limit"
+
+
+# ---------------------------------------------------------------------------
+# export — reference spec + path reconstruction + response descriptions
+# ---------------------------------------------------------------------------
+
+
+class TestExportParity:
+    def test_reference_spec_info_used(self, tmp_path):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(app_dir / "x.ex.get.py", "def main(response): pass\n")
+        ref = {"info": {"title": "My API", "version": "2.0.0", "description": "Great API."}}
+        doc = generate_openapi(app_dir, reference=ref)
+        assert doc["info"]["title"] == "My API"
+        assert doc["info"]["version"] == "2.0.0"
+        assert doc["info"]["description"] == "Great API."
+
+    def test_reference_spec_servers_security_carried_over(self, tmp_path):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(app_dir / "x.ex.get.py", "def main(response): pass\n")
+        ref = {
+            "info": {},
+            "servers": [{"url": "https://api.example.com"}],
+            "security": [{"bearerApiKey": []}],
+        }
+        doc = generate_openapi(app_dir, reference=ref)
+        assert doc["servers"] == [{"url": "https://api.example.com"}]
+        assert doc["security"] == [{"bearerApiKey": []}]
+
+    def test_path_param_segments_reconstructed(self, tmp_path):
+        # A handler whose docstring names a path parameter gets {param} in route path.
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(
+            app_dir / "users" / "user_id.ex.get.py",
+            'def main(request, response):\n'
+            '    """Get user.\n\n'
+            '    Parameters:\n'
+            '        user_id (string, path, required)\n\n'
+            '    Responses:\n'
+            '        200: User found\n'
+            '    """\n'
+            '    pass\n',
+        )
+        doc = generate_openapi(app_dir)
+        assert "/users/{user_id}" in doc["paths"]
+
+    def test_operation_id_strips_template_braces(self, tmp_path):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(
+            app_dir / "items" / "item_id.ex.get.py",
+            'def main(request, response):\n'
+            '    """Get item.\n\n'
+            '    Parameters:\n'
+            '        item_id (string, path, required)\n\n'
+            '    Responses:\n'
+            '        200: OK\n'
+            '    """\n'
+            '    pass\n',
+        )
+        doc = generate_openapi(app_dir)
+        op = doc["paths"]["/items/{item_id}"]["get"]
+        assert op["operationId"] == "items_item_id_get"
+
+    def test_response_descriptions_from_docstring(self, tmp_path):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(
+            app_dir / "todos.ex.get.py",
+            'def main(response):\n'
+            '    """List todos.\n\n'
+            '    Responses:\n'
+            '        200: Success\n'
+            '        401: Unauthorized\n'
+            '    """\n'
+            '    pass\n',
+        )
+        doc = generate_openapi(app_dir)
+        resp = doc["paths"]["/todos"]["get"]["responses"]
+        assert resp["200"]["description"] == "Success"
+        assert resp["401"]["description"] == "Unauthorized"
+
+    def test_inferred_parameters_have_in_query(self, tmp_path):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(app_dir / "items.ex.get.py", "def main(response, limit: int = 10): pass\n")
+        doc = generate_openapi(app_dir)
+        params = doc["paths"]["/items"]["get"]["parameters"]
+        assert params[0]["in"] == "query"
+
+    def test_load_and_inspect_with_docstring_and_sig_params(self, tmp_path):
+        # Covers line 101: handler with both a docstring AND signature params.
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        _write(
+            app_dir / "items.ex.get.py",
+            'def main(response, q: str):\n    """Search items.\n\n    Responses:\n        200: OK\n    """\n    pass\n',
+        )
+        doc = generate_openapi(app_dir)
+        op = doc["paths"]["/items"]["get"]
+        assert op["summary"] == "Search items."
+        params = {p["name"] for p in op.get("parameters", [])}
+        assert "q" in params

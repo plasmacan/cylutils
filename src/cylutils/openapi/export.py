@@ -10,15 +10,35 @@ def generate_openapi(
     app_path: str | Path,
     title: str = "Cylinder App",
     version: str = "1.0.0",
+    reference: dict | None = None,
 ) -> dict:
-    """Generate an OpenAPI 3.0.3 document dict from a Cylinder app directory."""
+    """Generate an OpenAPI 3.0.3 document dict from a Cylinder app directory.
+
+    If ``reference`` is a parsed OpenAPI spec dict, its ``info``, ``servers``,
+    ``security``, and ``tags`` fields are used as the base for the output doc.
+    """
     routes = scan_app(app_path)
+
+    # Build info section, preferring reference spec metadata if provided
+    ref = reference or {}
+    ref_info: dict = ref.get("info") or {}
+    info: dict = {
+        "title": ref_info.get("title") or title,
+        "version": ref_info.get("version") or version,
+    }
+    if ref_info.get("description"):
+        info["description"] = ref_info["description"]
 
     doc: dict = {
         "openapi": "3.0.3",
-        "info": {"title": title, "version": version},
+        "info": info,
         "paths": {},
     }
+
+    # Carry over top-level fields that cannot be inferred from code.
+    for key in ("servers", "security", "tags", "externalDocs"):
+        if key in ref:
+            doc[key] = ref[key]
 
     all_schemas: dict[str, dict] = {}
 
@@ -42,7 +62,9 @@ def generate_openapi(
 
 
 def _build_operation(route: RouteInfo) -> dict:
-    path_slug = route.path.strip("/").replace("/", "_") or "root"
+    # Strip template braces so operationId is a clean identifier.
+    clean_path = route.path.replace("{", "").replace("}", "")
+    path_slug = clean_path.strip("/").replace("/", "_") or "root"
     method_slug = route.method.lower()
     auto_operation_id = f"{path_slug}_{method_slug}"
 

@@ -10,8 +10,8 @@ from typing import Callable, Optional
 
 from .models import CYLINDER_PARAMS, RouteInfo
 
-_INFER_DESCRIPTION_LINE_COUNT = 2  # lines after summary to include in description
 _EX_RE = re.compile(r"^(.+)\.ex\.([a-zA-Z]+)\.py$")
+_PARAM_LINE_RE = re.compile(r"^    (\w+)(?:\s*\(([^)]*)\))?(?::\s*(.*))?$")
 
 _JSON_TYPE_MAP: dict[type, str] = {
     int: "integer",
@@ -84,15 +84,31 @@ def _load_and_inspect(route: RouteInfo) -> RouteInfo:
 
     inferred: dict = {}
     if route.function is not None:
-        params = _infer_parameters(route.function)
-        if params:
-            inferred["parameters"] = params
-        docstring = inspect.getdoc(route.function)
+        sig_params = _infer_parameters(route.function)
+        docstring = inspect.getdoc(route.function) or ""
+
         if docstring:
-            lines = docstring.splitlines()
-            inferred["summary"] = lines[0]
-            if len(lines) > _INFER_DESCRIPTION_LINE_COUNT:
-                inferred["description"] = "\n".join(lines[1 : _INFER_DESCRIPTION_LINE_COUNT + 1]).strip()
+            doc_meta = _parse_docstring_metadata(docstring)
+            if doc_meta["summary"]:
+                inferred["summary"] = doc_meta["summary"]
+            if doc_meta["description"]:
+                inferred["description"] = doc_meta["description"]
+
+            # Sig params are query params; docstring adds path/header/cookie params.
+            non_query = [p for p in doc_meta["parameters"] if p.get("in") != "query"]
+            all_params = sig_params + non_query
+            if all_params:
+                inferred["parameters"] = all_params
+
+            if doc_meta["responses"]:
+                inferred["responses"] = {
+                    code: ({"description": desc} if desc else {})
+                    for code, desc in doc_meta["responses"].items()
+                }
+
+            route.path = _reconstruct_path_params(route.path, doc_meta["parameters"])
+        elif sig_params:
+            inferred["parameters"] = sig_params
 
     sidecar = _load_sidecar(route.handler_file)
     # sidecar keys override inferred keys
@@ -194,7 +210,7 @@ def _infer_parameters(fn: Callable) -> list[dict]:
     """Infer OpenAPI parameter objects from a handler's type-annotated signature.
 
     Cylinder built-in parameters are excluded; everything else becomes a
-    candidate API parameter.
+    candidate query parameter.
     """
     try:
         sig = inspect.signature(fn)
@@ -217,12 +233,78 @@ def _infer_parameters(fn: Callable) -> list[dict]:
         if param.default is not inspect.Parameter.empty:
             schema["default"] = param.default
 
-        entry: dict = {"name": name}
+        entry: dict = {"name": name, "in": "query"}
         if schema:
             entry["schema"] = schema
         params.append(entry)
 
     return params
+
+
+def _parse_docstring_metadata(docstring: str) -> dict:
+    """Parse the structured docstring format produced by scaffold's _build_docstring."""
+    preamble: list[str] = []
+    parameters: list[dict] = []
+    responses: dict[str, str] = {}
+    section: str | None = None
+
+    for line in docstring.splitlines():
+        stripped = line.strip()
+
+        if stripped in ("Parameters:", "Request Body:", "Responses:"):
+            section = stripped.rstrip(":")
+            continue
+
+        if section is None:
+            preamble.append(line)
+        elif section == "Parameters" and line.startswith("    "):
+            m = _PARAM_LINE_RE.match(line)
+            if m:
+                name = m.group(1)
+                annotation = (m.group(2) or "").strip()
+                desc = (m.group(3) or "").strip()
+                parts = [p.strip() for p in annotation.split(",") if p.strip()]
+                in_ = next((p for p in parts if p in ("query", "path", "header", "cookie")), "query")
+                type_parts = [p for p in parts if p not in ("query", "path", "header", "cookie", "required")]
+                type_ = type_parts[0] if type_parts else ""
+                required = "required" in parts
+                entry: dict = {"name": name, "in": in_}
+                if type_:
+                    entry["schema"] = {"type": type_}
+                if required:
+                    entry["required"] = True
+                if desc:
+                    entry["description"] = desc
+                parameters.append(entry)
+        elif section == "Responses" and line.startswith("    "):
+            m = re.match(r"^    (\S+):\s*(.*)", line)
+            if m:
+                responses[m.group(1)] = m.group(2).strip()
+
+    preamble_text = "\n".join(preamble).strip()
+    if "\n" in preamble_text:
+        nl = preamble_text.index("\n")
+        summary = preamble_text[:nl].strip()
+        description = preamble_text[nl:].strip()
+    else:
+        summary = preamble_text
+        description = ""
+
+    return {
+        "summary": summary,
+        "description": description,
+        "parameters": parameters,
+        "responses": responses,
+    }
+
+
+def _reconstruct_path_params(path: str, params: list[dict]) -> str:
+    """Wrap path segments matching path-parameter names in ``{...}``."""
+    path_param_names = {p["name"] for p in params if p.get("in") == "path"}
+    if not path_param_names:
+        return path
+    segments = [s for s in path.strip("/").split("/") if s]
+    return "/" + "/".join(f"{{{s}}}" if s in path_param_names else s for s in segments)
 
 
 def _load_sidecar(handler_file: Path) -> dict:
