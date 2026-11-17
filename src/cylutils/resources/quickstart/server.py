@@ -13,7 +13,7 @@ def main(host: str | None, port: int | None) -> None:
     if not host and not port:
         print("\nTo change the host and port, run: python server.py [host] [port]")
     host = host or "127.0.0.1"
-    port = port or 8080
+    port = port or 80
     print(f"Starting server at http://{host}:{port}\n")
 
     app = cylinder.get_app(app_map=app_map)
