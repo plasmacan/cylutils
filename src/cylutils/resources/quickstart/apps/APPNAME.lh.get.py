@@ -1,5 +1,6 @@
-from werkzeug.wrappers import Response
 from logging import Logger
+
+from werkzeug.wrappers import Response
 
 
 def main(response: Response, logger: Logger) -> Response:

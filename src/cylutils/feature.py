@@ -13,10 +13,13 @@ class Feature:
     No other files need to be modified.
     """
 
-    # Lines added to the top-level import block in server.py
+    # Generated Python is tidied (imports sorted and grouped, blank lines normalized),
+    # so contributions only need to be valid code; ordering and spacing are handled.
+
+    # Import statements added to server.py, e.g. "import json"
     imports: list[str] = field(default_factory=list)
 
-    # Lines/blocks added to the top-level init block in server.py
+    # Top-level code blocks added to server.py (any indentation; they are dedented)
     init_code: list[str] = field(default_factory=list)
 
     # Entries added to the params dict passed to the app, e.g. '"store": s'
@@ -26,6 +29,7 @@ class Feature:
     app_map_params: list[str] = field(default_factory=list)
 
     # Code blocks run inside the app_map function body before params are built
+    # (any indentation; they are re-indented into the function body)
     app_map_code: list[str] = field(default_factory=list)
 
     # HTML anchor tags injected into the quickstart landing page

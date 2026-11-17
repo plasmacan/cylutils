@@ -1,9 +1,12 @@
-from werkzeug.wrappers import Request, Response
-from werkzeug.exceptions import Aborter
 from logging import Logger
 
+from werkzeug.exceptions import Aborter
+from werkzeug.wrappers import Request, Response
 
-def main(request: Request, response: Response, logger: Logger, abort: Aborter) -> Response:
+
+def main(
+    request: Request, response: Response, logger: Logger, abort: Aborter
+) -> Response:
 
     logger.info("Hello from the early hook!")
     user_agent = request.headers.get("User-Agent", "unknown")

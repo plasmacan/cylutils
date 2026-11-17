@@ -60,13 +60,12 @@ def hm_time(value):
 
 # Characters rewritten as \uXXXX so a value can't break out of a JS string literal,
 # whether it sits in a <script> block or an on* event attribute.
-_JS_ESCAPES = str.maketrans(
-    {ch: f"\\u{ord(ch):04X}" for ch in "\\'\"<>&=-;`\u2028\u2029" + "".join(map(chr, range(32)))}
-)
+_JS_UNSAFE = "\\'\"<>&=-;`\u2028\u2029" + "".join(map(chr, range(32)))
+_JS_ESCAPES = str.maketrans({ch: f"\\u{ord(ch):04X}" for ch in _JS_UNSAFE})
 
 
 def escapejs(value):
-    """Escape a value for use inside a quoted JS string, e.g. "{{ name|escapejs }}"."""
+    """Escape a value for use inside a quoted JS string: "{{ name|escapejs }}"."""
     # Markup stops autoescape from HTML-escaping the result a second time.
     return Markup(str(value).translate(_JS_ESCAPES))
 
@@ -83,7 +82,10 @@ def url_for(endpoint, **query_params):
 
 @functools.cache
 def render_template_factory(template_root):
-    """Return a render_template function for templates/<template_root>/, built once per app."""
+    """Return a render_template function for templates/<template_root>/.
+
+    Cached, so each app's Jinja environment is built once.
+    """
     jinja_env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(f"templates/{template_root}"),
         auto_reload=True,
@@ -166,9 +168,10 @@ class SessionDict(UserDict):
     app_map_params=["request", "response"],
     app_map_code=[
         """
-    session_id = request.cookies.get("session_id") or secrets.token_urlsafe(32)
-    response.set_cookie("session_id", session_id, httponly=True) # should also set `secure=True` in production
-    session = SessionDict(session_id)"""
+session_id = request.cookies.get("session_id") or secrets.token_urlsafe(32)
+# In production, also pass secure=True so the cookie is only sent over HTTPS.
+response.set_cookie("session_id", session_id, httponly=True)
+session = SessionDict(session_id)"""
     ],
     params=['"session": session', '"session_id": session_id'],
 )

@@ -8,5 +8,7 @@ def main(response):
         "bar2",
         "bar3",
     ]
-    response.data = json.dumps({"bars": bars, "message": "Hello from the quickstart template!"})
+    response.data = json.dumps(
+        {"bars": bars, "message": "Hello from the quickstart template!"}
+    )
     return response

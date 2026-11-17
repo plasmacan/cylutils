@@ -1,10 +1,28 @@
+import importlib.util
+import itertools
 import pathlib
+import subprocess
+import sys
 
 import pytest
 
 from cylutils.feature import Feature
 from cylutils.features import ADD_G, ADD_HTTP, ADDONS, JINJA2, SESSIONS, SIMPLE_STORE
-from cylutils.project import _unique_ordered, scaffold
+from cylutils.project import _fill_placeholders, _join_blocks, _unique_ordered, scaffold
+from cylutils.tidy import tidy_python
+
+ALL_FEATURES = {
+    "store": SIMPLE_STORE,
+    "jinja2": JINJA2,
+    "g": ADD_G,
+    "sessions": SESSIONS,
+    "http": ADD_HTTP,
+}
+FEATURE_COMBOS = [
+    combo
+    for n in range(len(ALL_FEATURES) + 1)
+    for combo in itertools.combinations(ALL_FEATURES, n)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +42,40 @@ class TestUniqueOrdered:
 
     def test_single_item(self):
         assert _unique_ordered(["x"]) == ["x"]
+
+
+# ---------------------------------------------------------------------------
+# _join_blocks / _fill_placeholders
+# ---------------------------------------------------------------------------
+
+
+class TestJoinBlocks:
+    def test_dedents_and_separates_blocks(self):
+        blocks = ["\n    a = 1\n    b = 2\n", "c = 3", "\n\n        d = 4"]
+        assert _join_blocks(blocks) == "a = 1\nb = 2\n\nc = 3\n\nd = 4"
+
+    def test_empty(self):
+        assert _join_blocks([]) == ""
+
+
+class TestFillPlaceholders:
+    def test_whole_line_placeholder_takes_line_indentation(self):
+        text = "def f():\n    # BODY #\n    return x\n"
+        result = _fill_placeholders(text, {"# BODY #": "x = 1\n\ny = 2"})
+        assert result == "def f():\n    x = 1\n\n    y = 2\n    return x\n"
+
+    def test_empty_whole_line_placeholder_removes_line(self):
+        text = "a\n    # BODY #\nb\n"
+        assert _fill_placeholders(text, {"# BODY #": ""}) == "a\nb\n"
+
+    def test_inline_placeholder_replaced_in_place(self):
+        text = 'return "apps", "# NAME #", params\n'
+        assert _fill_placeholders(text, {"# NAME #": "myapp"}) == 'return "apps", "myapp", params\n'
+
+    def test_placeholders_inside_inserted_values_are_replaced(self):
+        text = "    # BODY #\n"
+        replacements = {"# BODY #": 'f("# NAME #")', "# NAME #": "myapp"}
+        assert _fill_placeholders(text, replacements) == '    f("myapp")\n'
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +279,63 @@ class TestScaffoldAllFeatures:
         scaffold("proj", "myapp", [SIMPLE_STORE, JINJA2, ADD_G, SESSIONS, ADD_HTTP])
         content = _read(project_dir / "proj" / "server.py")
         compile(content, "server.py", "exec")
+
+
+# ---------------------------------------------------------------------------
+# Generated code quality, across every feature combination
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def all_combo_projects(tmp_path_factory):
+    """Scaffold one project per feature combination; return (root, python files)."""
+    root = tmp_path_factory.mktemp("combos")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(root)
+        for combo in FEATURE_COMBOS:
+            scaffold("p_" + ("_".join(combo) or "none"), "app", [ALL_FEATURES[c] for c in combo])
+    return root, sorted(root.glob("p_*/**/*.py"))
+
+
+class TestGeneratedCodeQuality:
+    def test_every_combination_compiles(self, all_combo_projects):
+        _, files = all_combo_projects
+        assert sum(f.name == "server.py" for f in files) == len(FEATURE_COMBOS)
+        for f in files:
+            compile(_read(f), str(f), "exec")
+
+    def test_every_generated_file_is_already_tidy(self, all_combo_projects):
+        _, files = all_combo_projects
+        untidy = [str(f) for f in files if tidy_python(_read(f)) != _read(f)]
+        assert untidy == []
+
+    # ruff runs from the combos root (as a user would from their project) so cylutils is
+    # classified as third-party, and is given the directory to stay under Windows' argv limit.
+    @pytest.mark.skipif(importlib.util.find_spec("ruff") is None, reason="ruff not installed")
+    def test_ruff_check_passes(self, all_combo_projects):
+        root, files = all_combo_projects
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "--isolated", "--no-cache", "--preview",
+             "--select", "E,W,F,I", "--output-format", "concise", "."],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @pytest.mark.skipif(importlib.util.find_spec("ruff") is None, reason="ruff not installed")
+    def test_ruff_format_check_passes(self, all_combo_projects):
+        root, files = all_combo_projects
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", "format", "--isolated", "--no-cache", "--check", "."],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"{len(files)} files already formatted" in result.stdout
+
+    def test_generated_link_keeps_landing_page_indentation(self, all_combo_projects):
+        root, _ = all_combo_projects
+        html = _read(root / "p_jinja2" / "templates" / "example.html")
+        api_link = next(line for line in html.splitlines() if "api/v1/foo" in line)
+        jinja_link = next(line for line in html.splitlines() if "jinja2-example" in line)
+        indent = len(api_link) - len(api_link.lstrip())
+        assert len(jinja_link) - len(jinja_link.lstrip()) == indent
+        assert "GENERATED LINKS" not in _read(root / "p_none" / "templates" / "example.html")

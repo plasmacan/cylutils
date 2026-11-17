@@ -9,10 +9,9 @@ dynamic = ["version"]
 description = "A collection of utilities for plasmacan/cylinder applications."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

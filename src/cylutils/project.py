@@ -1,7 +1,9 @@
 import pathlib
 import shutil
+import textwrap
 
 from .feature import Feature
+from .tidy import tidy_python
 
 _MODULE_ROOT = pathlib.Path(__file__).resolve().parent / "resources"
 QUICKSTART_DIR = _MODULE_ROOT / "quickstart"
@@ -11,6 +13,33 @@ def _unique_ordered(items: list[str]) -> list[str]:
     """Return items with duplicates removed, preserving first-seen order."""
     seen: set[str] = set()
     return [x for x in items if not (x in seen or seen.add(x))]
+
+
+def _join_blocks(blocks: list[str]) -> str:
+    """Dedent each code block and join them with a blank line between."""
+    return "\n\n".join(textwrap.dedent(block).strip("\n") for block in blocks)
+
+
+def _fill_placeholders(text: str, replacements: dict[str, str]) -> str:
+    """Replace placeholders in text.
+
+    A placeholder alone on its line is replaced by its value with that line's indentation
+    applied to every line of the value, or removed with its line if the value is empty.
+    Placeholders inside a line (or inside an inserted value) are replaced in place.
+    """
+    lines = []
+    for line in text.splitlines(keepends=True):
+        value = replacements.get(line.strip())
+        if value is None:
+            lines.append(line)
+        elif value:
+            indent = line[: len(line) - len(line.lstrip())]
+            lines.append(textwrap.indent(value, indent) + "\n")
+
+    text = "".join(lines)
+    for placeholder, value in replacements.items():
+        text = text.replace(placeholder, value)
+    return text
 
 
 def scaffold(project_name: str, app_name: str, selected_features: list[Feature]) -> None:
@@ -33,25 +62,18 @@ def scaffold(project_name: str, app_name: str, selected_features: list[Feature])
         generated_links_list.extend(feature.generated_links)
         extra_files.extend(feature.extra_files)
 
-    import_def = "\n".join(_unique_ordered(import_list))
-    init_def = "\n".join(init_list)
-    app_map_params = ", ".join(_unique_ordered(app_map_params_list))
-    app_map_def = "\n\n".join(app_map_code_list)
-    generated_links = "\n    ".join(generated_links_list)
-
     if params_list:
-        param_def = "{\n    " + ",\n    ".join(params_list) + ",\n}"
+        param_def = "params = {\n" + "".join(f"    {p},\n" for p in params_list) + "}"
     else:
-        param_def = "{}"
+        param_def = "params = {}"
 
     replacements = {
-        "# IMPORTDEF #": import_def,
-        "# INITDEF #": init_def,
-        "# APPMAPPARAMS #": app_map_params,
-        "# APPMAPDEF #": app_map_def,
-        "# PARAMSDEF #": "params = " + param_def,
-        "<!--GENERATED LINKS-->": generated_links,
-        # Last, so features can use the app name placeholder in the code they contribute.
+        "# IMPORTDEF #": "\n".join(_unique_ordered(import_list)),
+        "# INITDEF #": _join_blocks(init_list),
+        "# APPMAPPARAMS #": ", ".join(_unique_ordered(app_map_params_list)),
+        "# APPMAPDEF #": _join_blocks(app_map_code_list),
+        "# PARAMSDEF #": param_def,
+        "<!--GENERATED LINKS-->": "\n".join(generated_links_list),
         "# APPNAME #": app_name,
     }
 
@@ -65,21 +87,16 @@ def scaffold(project_name: str, app_name: str, selected_features: list[Feature])
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
 
-    # Apply placeholder replacements and rename APPNAME files
+    # Apply placeholder replacements, tidy Python files, and rename APPNAME files
     filepaths = [f for f in target_dir.glob("**/*") if f.is_file()]
     dirpaths = [d for d in target_dir.glob("**/*") if d.is_dir()]
     dirpaths.reverse()
 
     for fp in filepaths:
-        with fp.open("r", encoding="utf-8") as f:
-            content = f.readlines()
-
-        with fp.open("w", encoding="utf-8") as f:
-            for line in content:
-                newline = line
-                for placeholder, value in replacements.items():
-                    newline = newline.replace(placeholder, value)
-                f.write(newline)
+        content = _fill_placeholders(fp.read_text(encoding="utf-8"), replacements)
+        if fp.suffix == ".py":
+            content = tidy_python(content)
+        fp.write_text(content, encoding="utf-8")
 
         if "APPNAME" in fp.name.upper():
             new_name = fp.name.replace("APPNAME", app_name).replace("appname", app_name)

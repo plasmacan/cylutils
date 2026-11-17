@@ -16,7 +16,6 @@ def main(host: str | None, port: int | None) -> None:
     port = port or 8080
     print(f"Starting server at http://{host}:{port}\n")
 
-
     app = cylinder.get_app(app_map=app_map)
     waitress.serve(app, host=host, port=port)
 
